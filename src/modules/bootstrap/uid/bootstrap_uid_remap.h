@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2017-2023, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2017-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef NVSHMEM_BOOTSTRAP_UID_REMAP_H

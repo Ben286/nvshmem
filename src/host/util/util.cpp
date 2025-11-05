@@ -1,7 +1,7 @@
 /****
- * Copyright (c) 2016-2018, NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION.  All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  ****/
 
 #define __STDC_FORMAT_MACROS 1

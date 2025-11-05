@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include <assert.h>                                                        // for assert
@@ -575,6 +575,9 @@ int nvshmemi_symmetric_heap_vidmem_dynamic_vmm::cleanup_symmetric_heap() {
     NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                           "cuMemAddressFree failed \n");
 
+    nvshmemi_mem_p2p_transport::destroy_instance();
+    nvshmemi_mem_remote_transport::destroy_instance();
+
     INFO(NVSHMEM_MEM, "[%d] Leaving %s::cleanup_symmetric_heap\n", state->mype,
          typeid(decltype(this)).name());
 out:
@@ -614,6 +617,9 @@ int nvshmemi_symmetric_heap_static::cleanup_symmetric_heap() {
 
     INFO(NVSHMEM_MEM, "[%d] Leaving %s::cleanup_symmetric_heap\n", state->mype,
          typeid(decltype(this)).name());
+
+    nvshmemi_mem_p2p_transport::destroy_instance();
+    nvshmemi_mem_remote_transport::destroy_instance();
 
 out:
     return (status);

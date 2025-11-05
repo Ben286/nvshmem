@@ -41,6 +41,8 @@ project(
 )
 
 find_package(CUDAToolkit)
+find_package(CCCL PATHS ${CUDAToolkit_LIBRARY_DIR}/cmake/cccl)
+message(STATUS "CUDAToolkit_LIBRARY_DIR: ${CUDAToolkit_LIBRARY_DIR}")
 
 if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
   if(NOT DEFINED CUDA_ARCHITECTURES_UNDEFINED)
@@ -53,7 +55,7 @@ if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
     elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 OR (CUDAToolkit_VERSION_MAJOR EQUAL 12 AND CUDAToolkit_VERSION_MINOR LESS 8))
       set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     elseif(CUDAToolkit_VERSION_MAJOR EQUAL 13)
-      set(CMAKE_CUDA_ARCHITECTURES "80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "75-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     else()
       set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     endif()
@@ -149,11 +151,6 @@ target_include_directories(
             $<INSTALL_INTERFACE:include>
 )
 
-# from cuda 13.0, some headers have been moved to include/cccl
-if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 13)
-  target_include_directories(nvshmem_device PUBLIC ${CUDAToolkit_INCLUDE_DIRS}/include/cccl)
-endif()
-
 if(NVSHMEM_ENABLE_ALL_DEVICE_INLINING)
   configure_file(../include/non_abi/device/pt-to-pt/transfer_device.cuh.in ${CMAKE_CURRENT_SOURCE_DIR}/../include/non_abi/device/pt-to-pt/transfer_device.cuh COPYONLY)
 else()
@@ -165,6 +162,9 @@ else()
 endif()
 
 target_link_libraries(nvshmem_device PRIVATE CUDA::cudart_static)
+if (CCCL_FOUND AND CUDAToolkit_VERSION_MAJOR GREATER 12)
+  target_link_libraries(nvshmem_device PUBLIC CCCL::CCCL)
+endif()
 
 if(NVSHMEM_USE_NCCL)
   target_include_directories(nvshmem_device PRIVATE ${NCCL_INCLUDE})

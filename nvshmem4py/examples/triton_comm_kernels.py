@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 #
-# See COPYRIGHT.txt for license information
+# See License.txt for license information
 """
 This file demonstrates a custom communication kernel using Triton to generate CUDA programs.
 The kernel is designed to perform a broadcast operation using NVSHMEM4Py-allocated tensors.
@@ -28,6 +28,11 @@ from nvshmem.bindings import mc_ptr  # Gets a device-accessible remote pointer
 from mpi4py import MPI
 from cuda.core.experimental import Device, system
 
+"""
+The functions load_v4_u32 and multimem_st_b64 are adapted from the Triton-Distributed project to show a practical example of custom communication kernels on NVSHMEM symmetric heap memory.
+Source: https://github.com/ByteDance-Seed/Triton-distributed/blob/main/python/triton_dist/kernels/nvidia/low_latency_allgather.py
+"""
+
 @triton.jit
 def load_v4_u32(ptr):
     """
@@ -37,7 +42,7 @@ def load_v4_u32(ptr):
         asm="""
         ld.volatile.global.v4.u32 {$0,$1,$2,$3}, [$4];
         """,
-        constraints=("=r,=r,=r,=r,l"),  # no use output, which is threadId.x
+        constraints=("=r,=r,=r,=r,l"),
         args=[ptr],
         dtype=(tl.int32, tl.int32, tl.int32, tl.int32),
         is_pure=False,
@@ -54,7 +59,7 @@ def multimem_st_b64(ptr, val0):
         multimem.st.global.b64 [$1], $2;
         mov.u32 $0, 0;
         """,
-        constraints=("=r,l,l"),  # no use output
+        constraints=("=r,l,l"),
         args=[ptr, val0],
         dtype=tl.int32,
         is_pure=False,

@@ -1,10 +1,11 @@
 /*
- * Copyright (c) 2022-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2022-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
-#include <assert.h>                                      // for assert
+#include <assert.h>  // for assert
+#include <atomic>
 #include <cuda.h>                                        // for CUDA_SUCCESS, CUdevice, CUd...
 #include <cuda_runtime.h>                                // for cudaFree, cudaMalloc, cudaM...
 #include <driver_types.h>                                // for cudaSuccess, cudaMemcpyHost...
@@ -137,7 +138,8 @@ typedef enum {
 typedef enum {
     IBGDA_NIC_HANDLER_AUTO = 0,
     IBGDA_NIC_HANDLER_GPU,
-    IBGDA_NIC_HANDLER_CPU,
+    IBGDA_NIC_HANDLER_CPU_GDRCOPY,
+    IBGDA_NIC_HANDLER_CPU_HOST_MEMORY,
 } ibgda_nic_handler_t;
 
 struct ibgda_mem_object {
@@ -285,6 +287,7 @@ struct ibgda_device {
     bool support_half_av_seg;
     bool may_skip_cst;
     ibgda_nic_handler_t nic_handler;
+    bool data_direct;
 };
 
 typedef struct {
@@ -328,6 +331,12 @@ static int ibgda_num_fetch_slots_per_rc;
 /* ibv state */
 static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
+
+#ifdef NVSHMEM_USE_MLX5DV
+/* mlx5dv state */
+static struct nvshmemt_mlx5dv_function_table mlx5dv_ftable;
+static void *mlx5dv_handle;
+#endif
 
 /* CUDA function table */
 static struct nvshmemi_cuda_fn_table *ibgda_cuda_syms;
@@ -374,7 +383,7 @@ static int ibgda_parse_qp_map_by(nvshmemi_ibgda_device_qp_map_type_t *out_map_by
 
 static int ibgda_parse_nic_handler_request(ibgda_nic_handler_t *out_loc, const char *str) {
     int status = 0;
-    ibgda_nic_handler_t loc;
+    ibgda_nic_handler_t loc = IBGDA_NIC_HANDLER_AUTO;
     std::string req = str;
 
     // Trim whitespace
@@ -388,15 +397,26 @@ static int ibgda_parse_nic_handler_request(ibgda_nic_handler_t *out_loc, const c
     } else if (req == "gpu") {
         loc = IBGDA_NIC_HANDLER_GPU;
     } else if (req == "cpu") {
-        loc = IBGDA_NIC_HANDLER_CPU;
+        loc = IBGDA_NIC_HANDLER_CPU_GDRCOPY;
+    } else if (req == "cpu_host_memory") {
+        loc = IBGDA_NIC_HANDLER_CPU_HOST_MEMORY;
     } else {
         status = NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    if (loc == IBGDA_NIC_HANDLER_CPU_GDRCOPY && !use_gdrcopy) {
+        status = NVSHMEMX_ERROR_NOT_SUPPORTED;
+        NVSHMEMI_ERROR_JMP(
+            status, NVSHMEMX_ERROR_NOT_SUPPORTED, out,
+            "NVSHMEM_IBGDA_NIC_HANDLER=cpu requires GDRCopy.\n"
+            "please use one of NVSHMEM_IBGDA_NIC_HANDLER=auto/gpu/cpu_host_memory instead.\n");
     }
 
     if (status == 0) {
         *out_loc = loc;
     }
 
+out:
     return status;
 }
 
@@ -406,7 +426,6 @@ static size_t ibgda_get_host_page_size() {
     return host_page_size;
 }
 
-#ifdef NVSHMEM_USE_GDRCOPY
 int nvshmemt_ibgda_progress(nvshmem_transport_t t) {
     nvshmemt_ibgda_state_t *ibgda_state = (nvshmemt_ibgda_state_t *)t->state;
     int n_devs_selected = ibgda_state->n_devs_selected;
@@ -427,9 +446,20 @@ int nvshmemt_ibgda_progress(nvshmem_transport_t t) {
         prod_idx_snapshot = device->qp_shared_object.prod_idx_snapshot;
         prod_idx_array = (uint64_t *)device->qp_shared_object.prod_idx_mobject->aligned.cpu_ptr;
 
-        gdrcopy_ftable.copy_from_mapping(device->qp_shared_object.prod_idx_mobject->mh,
-                                         prod_idx_snapshot, prod_idx_array,
-                                         sizeof(uint64_t) * num_prod_idx_slots);
+#ifdef NVSHMEM_USE_GDRCOPY
+        if (device->nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY) {
+            gdrcopy_ftable.copy_from_mapping(device->qp_shared_object.prod_idx_mobject->mh,
+                                             prod_idx_snapshot, prod_idx_array,
+                                             sizeof(uint64_t) * num_prod_idx_slots);
+        } else
+#endif
+            if (device->nic_handler == IBGDA_NIC_HANDLER_CPU_HOST_MEMORY) {
+            for (int i = 0; i < num_prod_idx_slots; ++i) {
+                prod_idx_snapshot[i] = IBGDA_READ_ONCE(prod_idx_array[i]);
+            }
+        } else {
+            goto out;
+        }
 
         for (int i = 0; i < num_prod_idx_slots; ++i) {
             uint64_t prod_idx = prod_idx_snapshot[i];
@@ -451,18 +481,16 @@ int nvshmemt_ibgda_progress(nvshmem_transport_t t) {
                 ctrl_seg.opmod_idx_opcode = htobe32(prod_idx << 8);
 
                 IBGDA_WRITE_ONCE(*dbrec, htobe32(prod_idx & 0xffff));
-                STORE_BARRIER();
+                std::atomic_thread_fence(std::memory_order_release);
                 IBGDA_WRITE_ONCE(*bf, *((__be64 *)&ctrl_seg));
 
                 prod_idx_cache[i] = prod_idx;
             }
         }
     }
+out:
     return NVSHMEMX_SUCCESS;
 }
-#else
-int nvshmemt_ibgda_progress(nvshmem_transport_t t) { return NVSHMEMX_ERROR_NOT_SUPPORTED; }
-#endif
 
 int nvshmemt_ibgda_show_info(struct nvshmem_transport *transport, int style) {
     NVSHMEMI_ERROR_PRINT("ibgda show info not implemented");
@@ -475,10 +503,11 @@ static int get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     nvshmemt_ibgda_state_t *ibgda_state = (nvshmemt_ibgda_state_t *)transport->state;
     int dev_id = ibgda_state->dev_ids[dev];
-    const char *ib_name =
-        (const char *)((struct ibgda_device *)ibgda_state->devices)[dev_id].dev->name;
 
-    status = nvshmemt_ib_iface_get_mlx_path(ib_name, pci_path);
+    struct ibgda_device *device = &(((struct ibgda_device *)ibgda_state->devices)[dev_id]);
+    status = nvshmemt_ib_iface_get_mlx_path(device->dev, device->context, pci_path, &ftable,
+                                            &mlx5dv_ftable, &(device->data_direct),
+                                            ibgda_state->log_level);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmemt_ib_iface_get_mlx_path failed \n");
 
@@ -537,10 +566,12 @@ int nvshmemt_ibgda_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf, s
             ((struct ibgda_device *)ibgda_state->devices + ibgda_state->selected_dev_ids[i]);
         nvshmem_mem_handle_t *dev_handle = (nvshmem_mem_handle_t *)&handle->dev_mem_handles[i];
 
+        INFO(ibgda_state->log_level, "[%d] IBGDA: device used %s, data_direct support: %d",
+             transport->my_pe, device->dev->name, device->data_direct);
         status = nvshmemt_ib_common_reg_mem_handle(
-            &ftable, device->pd, dev_handle, buf, length, local_only,
+            &ftable, &mlx5dv_ftable, device->pd, dev_handle, buf, length, local_only,
             ibgda_state->dmabuf_support_for_data_buffers, ibgda_cuda_syms, ibgda_state->log_level,
-            ibgda_state->options->IB_ENABLE_RELAXED_ORDERING, alias_va_ptr);
+            ibgda_state->options->IB_ENABLE_RELAXED_ORDERING, device->data_direct, alias_va_ptr);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "Unable to register memory handle.\n");
     }
@@ -1479,11 +1510,13 @@ static int ibgda_create_internal_buffer(struct ibgda_internal_buffer *internal_b
     NVSHMEMI_NULL_ERROR_JMP(internal_buf_mhandle, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
                             "Unable to allocate internal_buf_mhandle.\n");
 
+    INFO(ibgda_state->log_level, "IBGDA: device: %s for internal buffer, data_direct support: %d",
+         device->dev->name, device->data_direct);
     status = nvshmemt_ib_common_reg_mem_handle(
-        &ftable, device->pd, (nvshmem_mem_handle_t *)internal_buf_mhandle,
+        &ftable, &mlx5dv_ftable, device->pd, (nvshmem_mem_handle_t *)internal_buf_mhandle,
         (void *)internal_buf_mobject->aligned.gpu_ptr, internal_buf_mobject->aligned.size, false,
         ibgda_state->dmabuf_support_for_data_buffers, ibgda_cuda_syms, ibgda_state->log_level,
-        ibgda_state->options->IB_ENABLE_RELAXED_ORDERING);
+        ibgda_state->options->IB_ENABLE_RELAXED_ORDERING, device->data_direct);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "Unable to register memory for IBGDA transport.\n");
 
@@ -1536,8 +1569,12 @@ static int ibgda_destroy_qp_shared_objects(nvshmemt_ibgda_state_t *ibgda_state,
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "destroy_srq failed.\n");
     }
 
-    if (device->qp_shared_object.prod_idx_mobject)
-        ibgda_gpu_mem_free(device->qp_shared_object.prod_idx_mobject);
+    if (device->qp_shared_object.prod_idx_mobject) {
+        if (ibgda_nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY)
+            ibgda_gpu_mem_free(device->qp_shared_object.prod_idx_mobject);
+        else
+            ibgda_host_mem_free(device->qp_shared_object.prod_idx_mobject);
+    }
 
     if (device->qp_shared_object.prod_idx_cache) free(device->qp_shared_object.prod_idx_cache);
 
@@ -1716,11 +1753,19 @@ static int ibgda_create_qp_shared_objects(nvshmemt_ibgda_state_t *ibgda_state,
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "ibgda_create_internal_buffer failed.\n");
 
-    if (ibgda_nic_handler == IBGDA_NIC_HANDLER_CPU) {
-        status = ibgda_gpu_mem_alloc(&prod_idx_mobject, sizeof(uint64_t) * num_eps,
-                                     IBGDA_GPAGE_SIZE, true);
-        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
-                              "cannot allocate prod_idx_mobject.\n");
+    if (ibgda_nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY ||
+        ibgda_nic_handler == IBGDA_NIC_HANDLER_CPU_HOST_MEMORY) {
+        if (ibgda_nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY) {
+            status = ibgda_gpu_mem_alloc(&prod_idx_mobject, sizeof(uint64_t) * num_eps,
+                                         IBGDA_GPAGE_SIZE, true);
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "cannot allocate prod_idx_mobject.\n");
+        } else {
+            status = ibgda_host_mem_alloc(&prod_idx_mobject, sizeof(uint64_t) * num_eps,
+                                          IBGDA_GPAGE_SIZE, true);
+            NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
+                                  "cannot allocate prod_idx_mobject.\n");
+        }
 
         prod_idx_cache = (uint64_t *)calloc(num_eps, sizeof(uint64_t));
         NVSHMEMI_NULL_ERROR_JMP(prod_idx_cache, status, NVSHMEMX_ERROR_OUT_OF_MEMORY, out,
@@ -1778,7 +1823,12 @@ out:
         }
         if (recv_cq) ftable.destroy_cq(recv_cq);
         if (srq) ftable.destroy_srq(srq);
-        if (prod_idx_mobject) ibgda_gpu_mem_free(prod_idx_mobject);
+        if (prod_idx_mobject) {
+            if (ibgda_nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY)
+                ibgda_gpu_mem_free(prod_idx_mobject);
+            else
+                ibgda_host_mem_free(prod_idx_mobject);
+        }
         if (prod_idx_cache) free(prod_idx_cache);
         if (prod_idx_snapshot) free(prod_idx_snapshot);
     }
@@ -1786,7 +1836,8 @@ out:
 }
 
 static int ibgda_alloc_and_map_qp_uar(struct ibv_context *context, ibgda_nic_handler_t handler,
-                                      struct ibgda_mem_object **out_mobject) {
+                                      struct ibgda_mem_object **out_mobject,
+                                      bool use_nc_uar = false) {
     int status = 0;
 
     struct mlx5dv_devx_uar *uar = NULL;
@@ -1800,7 +1851,15 @@ static int ibgda_alloc_and_map_qp_uar(struct ibv_context *context, ibgda_nic_han
         uar_reg_size = IBGDA_MLX5_NC_UAR_SIZE;
     else
 #endif
-    {
+        /* We only use this in the case that we have CPU proxy. When extending support to SM-Side
+         * code, we will need to add an explicit check for mmio support in the cuda driver.
+         */
+        if (use_nc_uar) {
+        uar = mlx5dv_devx_alloc_uar(context, MLX5DV_UAR_ALLOC_TYPE_NC);
+        if (uar) uar_reg_size = IBGDA_MLX5_NC_UAR_SIZE;
+    }
+
+    if (!uar) {
         uint8_t cmd_cap_in[DEVX_ST_SZ_BYTES(query_hca_cap_in)] = {
             0,
         };
@@ -1947,7 +2006,8 @@ static int ibgda_create_qp(struct ibgda_ep **ep_ptr, struct ibgda_device *device
                             "Unable to allocate mem for ep.\n");
 
     // Allocate and map UAR. This will be used as a DB/BF register.
-    status = ibgda_alloc_and_map_qp_uar(context, ibgda_nic_handler, &uar_mobject);
+    status = ibgda_alloc_and_map_qp_uar(context, ibgda_nic_handler, &uar_mobject,
+                                        ibgda_nic_handler != IBGDA_NIC_HANDLER_GPU);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "ibgda_alloc_and_map_qp_uar failed\n");
 
@@ -2333,7 +2393,7 @@ static void ibgda_get_device_qp_mvars(nvshmemi_ibgda_device_qp_management_t *dev
 }
 
 static void ibgda_get_device_qp(nvshmemi_ibgda_device_qp_t *dev_qp, struct ibgda_device *device,
-                                const struct ibgda_ep *ep, int selected_dev_idx) {
+                                const struct ibgda_ep *ep, int ep_idx, int selected_dev_idx) {
     uintptr_t ibuf_dci_start;
     uintptr_t ibuf_rc_start;
     void *ibuf_ptr = NULL;
@@ -2358,6 +2418,10 @@ static void ibgda_get_device_qp(nvshmemi_ibgda_device_qp_t *dev_qp, struct ibgda
 
         assert(ep->uar_mobject->has_gpu_mapping);
         dev_qp->tx_wq.bf = (void *)ep->uar_mobject->aligned.gpu_ptr;
+    } else {
+        dev_qp->tx_wq.bf =
+            (void *)((uintptr_t)device->qp_shared_object.prod_idx_mobject->aligned.gpu_ptr +
+                     (device->dci.num_eps + ep_idx) * sizeof(uint64_t));
     }
 
     dev_qp->tx_wq.nwqes = ep->sq_cnt;
@@ -2531,7 +2595,8 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
             struct ibgda_device *device = (struct ibgda_device *)ibgda_state->devices + dev_idx;
             uintptr_t base_mvars_d_addr = (uintptr_t)(&dci_d[arr_idx]) + mvars_offset;
 
-            ibgda_get_device_qp(&dci_h[arr_idx], device, device->dci.eps[i], j);
+            ibgda_get_device_qp(&dci_h[arr_idx], device, device->dci.eps[i],
+                                i - device->dci.num_eps, j);
             dci_h[arr_idx].tx_wq.cq = &cq_d[cq_idx];
 
             ibgda_get_device_cq(&cq_h[cq_idx], device->dci.eps[i]->send_cq);
@@ -2540,15 +2605,8 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
             cq_h[cq_idx].ready_head = (uint64_t *)(base_mvars_d_addr + wqe_t_offset);
             cq_h[cq_idx].qpn = dci_h[arr_idx].qpn;
             cq_h[cq_idx].qp_type = dci_h[arr_idx].qp_type;
-
-            if (ibgda_nic_handler == IBGDA_NIC_HANDLER_GPU) {
-                dci_h[arr_idx].tx_wq.prod_idx = (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
-                cq_h[cq_idx].prod_idx = (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
-            } else {
-                dci_h[arr_idx].tx_wq.prod_idx =
-                    &((uint64_t *)device->qp_shared_object.prod_idx_mobject->aligned.gpu_ptr)[i];
-                cq_h[cq_idx].prod_idx = dci_h[arr_idx].tx_wq.prod_idx;
-            }
+            dci_h[arr_idx].tx_wq.prod_idx = (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
+            cq_h[cq_idx].prod_idx = (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
 
             ++cq_idx;
         }
@@ -2567,7 +2625,7 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
                 struct ibgda_device *device = (struct ibgda_device *)ibgda_state->devices + dev_idx;
                 uintptr_t base_mvars_d_addr = (uintptr_t)(&rc_d[arr_idx]) + mvars_offset;
 
-                ibgda_get_device_qp(&rc_h[arr_idx], device, device->rc.eps[i], j);
+                ibgda_get_device_qp(&rc_h[arr_idx], device, device->rc.eps[i], i, j);
 
                 rc_h[arr_idx].tx_wq.cq = &cq_d[cq_idx];
 
@@ -2578,16 +2636,8 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
                 cq_h[cq_idx].qpn = rc_h[arr_idx].qpn;
                 cq_h[cq_idx].qp_type = rc_h[arr_idx].qp_type;
 
-                if (ibgda_nic_handler == IBGDA_NIC_HANDLER_GPU) {
-                    rc_h[arr_idx].tx_wq.prod_idx =
-                        (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
-                    cq_h[cq_idx].prod_idx = (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
-                } else {
-                    rc_h[arr_idx].tx_wq.prod_idx =
-                        &((uint64_t *)device->qp_shared_object.prod_idx_mobject->aligned
-                              .gpu_ptr)[device->dci.num_eps + i];
-                    cq_h[cq_idx].prod_idx = rc_h[arr_idx].tx_wq.prod_idx;
-                }
+                rc_h[arr_idx].tx_wq.prod_idx = (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
+                cq_h[cq_idx].prod_idx = (uint64_t *)(base_mvars_d_addr + prod_idx_offset);
 
                 ++cq_idx;
             }
@@ -2648,7 +2698,7 @@ static int ibgda_setup_gpu_state(nvshmem_transport_t t) {
     ibgda_device_state_h->num_requests_in_batch = ibgda_num_requests_in_batch;
     ibgda_device_state_h->support_half_av_seg = support_half_av_seg;
     ibgda_device_state_h->may_skip_cst = skip_cst;
-    ibgda_device_state_h->use_async_postsend = (ibgda_nic_handler == IBGDA_NIC_HANDLER_CPU);
+    ibgda_device_state_h->use_async_postsend = (ibgda_nic_handler != IBGDA_NIC_HANDLER_GPU);
     ibgda_device_state_h->num_devices_initialized = n_devs_selected;
     assert(ibgda_nic_buf_location == IBGDA_MEM_TYPE_GPU ||
            ibgda_nic_buf_location == IBGDA_MEM_TYPE_HOST);
@@ -2685,7 +2735,7 @@ static bool ibgda_cst_is_required(struct ibgda_device *device, CUdevice dev_id) 
         // GPU guarantees incoming PCIe write ordering. No need to do CST.
         if (order >= CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER) rval = false;
     }
-
+    rval = rval || device->data_direct;
     return rval;
 }
 
@@ -3245,6 +3295,12 @@ int nvshmemt_ibgda_finalize(nvshmem_transport_t transport) {
 
     nvshmemt_ibv_ftable_fini(&ibv_handle);
 
+#ifdef NVSHMEM_USE_MLX5DV
+    if (mlx5dv_handle) {
+        nvshmemt_mlx5dv_ftable_fini(&mlx5dv_handle);
+    }
+#endif
+
     if (transport->state) {
         if (ibgda_state->selected_dev_ids) {
             free(ibgda_state->selected_dev_ids);
@@ -3502,7 +3558,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
 
     ibgda_nic_mapping_memtype_reqeust_t nic_mapping_memtype_request;
 
-    ibgda_nic_handler_t nic_handler_request;
+    ibgda_nic_handler_t nic_handler_request = IBGDA_NIC_HANDLER_AUTO;
     ibgda_nic_handler_t nic_handler = IBGDA_NIC_HANDLER_GPU;
 
     if (NVSHMEM_TRANSPORT_MAJOR_VERSION(api_version) != NVSHMEM_TRANSPORT_PLUGIN_MAJOR_VERSION) {
@@ -3592,6 +3648,26 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                            "Unable to dlopen libibverbs. Skipping IBGDA transport.\n");
     }
+
+#ifdef NVSHMEM_USE_MLX5DV
+    if (!ibgda_state->options->DISABLE_DATA_DIRECT) {
+        if (nvshmemt_mlx5dv_ftable_init(&mlx5dv_handle, &mlx5dv_ftable, ibgda_state->log_level)) {
+            NVSHMEMI_WARN_PRINT("Unable to dlopen libmlx5dv. Disabling directNIC features.");
+            // mlx5dv_handle will be NULL on failure
+            mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+            mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+            mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        }
+    } else {
+        mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+        mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+        mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        INFO(ibgda_state->log_level,
+             "directNIC features are disabled by NVSHMEM_DISABLE_DATA_DIRECT=1");
+    }
+#else
+    INFO(ibgda_state->log_level, "directNIC features are disabled");
+#endif
 
 #ifdef NVSHMEM_USE_GDRCOPY
     if (options->DISABLE_GDRCOPY) {
@@ -3683,16 +3759,8 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
 #endif
 
     status = ibgda_parse_nic_handler_request(&nic_handler_request, options->IBGDA_NIC_HANDLER);
+    INFO(ibgda_state->log_level, "NVSHMEM_IBGDA_NIC_HANDLER: %s\n", options->IBGDA_NIC_HANDLER);
     NVSHMEMI_NZ_ERROR_JMP(status, status, out, "NVSHMEM_IBGDA_NIC_HANDLER is not valid.");
-
-    if (!use_gdrcopy) {
-        if (nic_handler_request == IBGDA_NIC_HANDLER_AUTO) {
-            nic_handler_request = IBGDA_NIC_HANDLER_GPU;
-        } else if (nic_handler_request == IBGDA_NIC_HANDLER_CPU) {
-            NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_NOT_SUPPORTED, out,
-                               "NVSHMEM_IBGDA_NIC_HANDLER=cpu requires GDRCopy.\n");
-        }
-    }
 
     INFO(ibgda_state->log_level,
          "Begin - Enumerating IB devices in the system ([<dev_id, device_name, num_ports>]) - \n");
@@ -3709,11 +3777,22 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         const char *name = ftable.get_device_name(device->dev);
         NVSHMEMI_NULL_ERROR_JMP(name, status, NVSHMEMX_ERROR_INTERNAL, out,
                                 "ibv_get_device_name failed \n");
-        if (!strstr(name, "mlx5")) {
+
+        const char *hca_prefix = ibgda_state->options->HCA_PREFIX;
+        bool device_supported = false;
+
+        if (hca_prefix) {
+            device_supported = strstr(name, hca_prefix) != NULL;
+        } else {
+            device_supported = strstr(name, "mlx5") != NULL || strstr(name, "ibp") != NULL;
+        }
+
+        if (!device_supported) {
             ftable.close_device(device->context);
             device->context = NULL;
-            NVSHMEMI_WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...\n",
-                                name);
+            NVSHMEMI_WARN_PRINT(
+                "device %s is not supported (expected HCA interface: %s). Skipping...\n", name,
+                hca_prefix ? hca_prefix : "mlx5 or ibp");
             continue;
         }
 
@@ -3728,16 +3807,20 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
             continue;
         }
 
-        if (nic_handler_request == IBGDA_NIC_HANDLER_CPU) {
-            device->nic_handler = IBGDA_NIC_HANDLER_CPU;
+        if (nic_handler_request == IBGDA_NIC_HANDLER_CPU_GDRCOPY) {
+            device->nic_handler = IBGDA_NIC_HANDLER_CPU_GDRCOPY;
+        } else if (nic_handler_request == IBGDA_NIC_HANDLER_CPU_HOST_MEMORY) {
+            device->nic_handler = IBGDA_NIC_HANDLER_CPU_HOST_MEMORY;
         } else {
             status = ibgda_check_gpu_mapping_nic_uar(device);
-            device->nic_handler = status ? IBGDA_NIC_HANDLER_CPU : IBGDA_NIC_HANDLER_GPU;
-            if (status && nic_handler_request == IBGDA_NIC_HANDLER_GPU) {
-                ftable.close_device(device->context);
-                device->context = NULL;
-                NVSHMEMI_WARN_PRINT("GPU cannot map UAR of device %s. Skipping...\n", name);
-                continue;
+            if (status) {
+                if (use_gdrcopy) {
+                    device->nic_handler = IBGDA_NIC_HANDLER_CPU_GDRCOPY;
+                } else {
+                    device->nic_handler = IBGDA_NIC_HANDLER_CPU_HOST_MEMORY;
+                }
+            } else {
+                device->nic_handler = IBGDA_NIC_HANDLER_GPU;
             }
         }
 
@@ -3878,7 +3961,10 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         device = (struct ibgda_device *)ibgda_state->devices + ibgda_state->dev_ids[i];
         nic_buf_on_gpumem &= device->support_nic_buf_on_gpumem;
         nic_buf_on_hostmem &= device->support_nic_buf_on_hostmem;
-        if (device->nic_handler == IBGDA_NIC_HANDLER_CPU) nic_handler = IBGDA_NIC_HANDLER_CPU;
+        if (device->nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY)
+            nic_handler = IBGDA_NIC_HANDLER_CPU_GDRCOPY;
+        if (device->nic_handler == IBGDA_NIC_HANDLER_CPU_HOST_MEMORY)
+            nic_handler = IBGDA_NIC_HANDLER_CPU_HOST_MEMORY;
     }
     INFO(ibgda_state->log_level,
          "End - Ordered list of devices for assignment (after processing user provdied env vars "
@@ -3900,6 +3986,13 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         status = get_pci_path(i, &transport->device_pci_paths[i], transport);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "Failed to get paths for PCI devices.\n");
+        if (((struct ibgda_device *)ibgda_state->devices)[ibgda_state->dev_ids[i]].data_direct &&
+            ibgda_state->options->IBGDA_NUM_RC_PER_PE < 4) {
+            // Need 4 QPs for achieving bandwidth in data direct device
+            ibgda_state->options->IBGDA_NUM_RC_PER_PE = 4;
+            INFO(ibgda_state->log_level,
+                 "Setting IBGDA_NUM_RC_PER_PE = 4 as data direct device is detected");
+        }
     }
 
     assert(nic_buf_on_gpumem || nic_buf_on_hostmem);
@@ -3911,10 +4004,13 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         INFO(ibgda_state->log_level, "NIC buffer will be on host memory.\n");
     }
 
-    assert(nic_handler == IBGDA_NIC_HANDLER_GPU || nic_handler == IBGDA_NIC_HANDLER_CPU);
-    if (nic_handler == IBGDA_NIC_HANDLER_CPU) {
+    assert(nic_handler == IBGDA_NIC_HANDLER_GPU || nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY ||
+           nic_handler == IBGDA_NIC_HANDLER_CPU_HOST_MEMORY);
+    if (nic_handler == IBGDA_NIC_HANDLER_CPU_GDRCOPY) {
         assert(use_gdrcopy);
-        INFO(ibgda_state->log_level, "NIC handler will be CPU.\n");
+        INFO(ibgda_state->log_level, "NIC handler will be CPU with gdrcopy backend.\n");
+    } else if (nic_handler == IBGDA_NIC_HANDLER_CPU_HOST_MEMORY) {
+        INFO(ibgda_state->log_level, "NIC handler will be CPU with host memory backend.\n");
     } else {
         INFO(ibgda_state->log_level, "NIC handler will be GPU.\n");
     }

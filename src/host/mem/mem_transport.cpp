@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include <cuda.h>                                                          // for CUdevice
@@ -31,9 +31,18 @@
 #include "internal/host_transport/transport.h"                             // for nvshm...
 #include "non_abi/nvshmem_build_options.h"                                 // for NVSHM...
 
+// Static member variable definitions (only the ones not defined elsewhere)
+void *nvshmemi_mem_p2p_transport::nvml_handle_ = nullptr;
+struct nvml_function_table nvshmemi_mem_p2p_transport::nvml_ftable_;
+
 /**
  * nvshmemi_mem_p2p_transport specific functions
  */
+
+// Static wrapper function for atexit that matches the expected signature
+void nvshmemi_mem_p2p_transport::nvshmemi_nvml_ftable_fini_wrapper(void) {
+    nvshmemi_nvml_ftable_fini(&nvml_ftable_, &nvml_handle_);
+}
 
 void nvshmemi_mem_p2p_transport::print_mem_handle(int pe_id, int transport_idx,
                                                   nvshmemi_symmetric_heap &obj) {
@@ -101,18 +110,22 @@ nvshmemi_mem_p2p_transport::nvshmemi_mem_p2p_transport(int mype, int npes) {
     fabricInfo2.version = nvmlGpuFabricInfo_v2;
 
     /* start NVML Library */
-    nvml_status = nvshmemi_nvml_ftable_init(&nvml_ftable_, &nvml_handle_);
-    if (nvml_status != NVML_SUCCESS) {
-        status = NVSHMEMX_ERROR_INTERNAL;
-        INFO(NVSHMEM_MEM, "Unable to open NVML. Some features will be disabled.");
-        goto out;
-    }
+    if (nvml_handle_ == nullptr) {
+        nvml_status = nvshmemi_nvml_ftable_init(&nvml_ftable_, &nvml_handle_);
+        if (nvml_status != NVML_SUCCESS) {
+            status = NVSHMEMX_ERROR_INTERNAL;
+            INFO(NVSHMEM_MEM, "Unable to open NVML. Some features will be disabled.");
+            goto out;
+        }
 
-    nvml_status = nvml_ftable_.nvmlInit();
-    if (nvml_status != NVML_SUCCESS) {
-        status = NVSHMEMX_ERROR_INTERNAL;
-        INFO(NVSHMEM_MEM, "Unable to initialize NVML. Some features will be disabled.");
-        goto out;
+        nvml_status = nvml_ftable_.nvmlInit();
+        if (nvml_status != NVML_SUCCESS) {
+            status = NVSHMEMX_ERROR_INTERNAL;
+            INFO(NVSHMEM_MEM, "Unable to initialize NVML. Some features will be disabled. %d",
+                 nvml_status);
+            goto out;
+        }
+        atexit(nvshmemi_nvml_ftable_fini_wrapper);
     }
 
     /* Discover cudevice instance and device ID */
@@ -262,14 +275,6 @@ int nvshmemi_mem_p2p_transport::get_num_p2p_connected_pes(nvshmemi_symmetric_hea
 }
 
 nvshmemi_mem_p2p_transport::~nvshmemi_mem_p2p_transport() {
-    int nvml_status = 0;
-    if (nvml_handle_) {
-        nvml_status = nvml_ftable_.nvmlShutdown();
-        if (nvml_status != NVML_SUCCESS) {
-            INFO(NVSHMEM_MEM, "Unable to stop NVML library in NVSHMEM.");
-        }
-        nvshmemi_nvml_ftable_fini(&nvml_ftable_, &nvml_handle_);
-    }
     proc_map_.clear();
     if (p2p_objref_ != nullptr) p2p_objref_ = nullptr;
 }

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include "transport_mlx5_common.h"

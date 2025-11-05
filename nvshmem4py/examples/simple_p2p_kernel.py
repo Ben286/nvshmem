@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 #
-# See COPYRIGHT.txt for license information
+# See License.txt for license information
 
 """
 This file shows a minimal example of using NVSHMEM4Py to run a collective operation on CuPy arrays

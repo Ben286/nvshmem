@@ -81,7 +81,7 @@ if(NOT SubBuild)
       elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 OR (CUDAToolkit_VERSION_MAJOR EQUAL 12 AND CUDAToolkit_VERSION_MINOR LESS 8))
         set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       elseif(CUDAToolkit_VERSION_MAJOR EQUAL 13)
-        set(CMAKE_CUDA_ARCHITECTURES "80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+        set(CMAKE_CUDA_ARCHITECTURES "75-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       else()
         set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
       endif()
@@ -148,6 +148,12 @@ else()
   set(NVSHMEM_PTX_ARCH "ptx82")
 endif()
 
+if(CUDAToolkit_VERSION_MAJOR LESS 13)
+  set(BITCODE_CXX_STD "c++11")
+else()
+  set(BITCODE_CXX_STD "c++17")
+endif()
+
 if (NOT SubBuild)
   configure_file(${NVSHMEM_PERFTEST_TLD}/../src/include/non_abi/device/pt-to-pt/transfer_device.cuh.in
   ${NVSHMEM_PERFTEST_TLD}/common/include/non_abi/device/pt-to-pt/transfer_device.cuh COPYONLY)
@@ -193,11 +199,11 @@ macro(nvshmem_add_cubin_perftest_prefix SOURCE PREFIX)
   string(REPLACE ${SOURCE} "" DIR ${DIR})
   set(CUBIN_UNLINKED_NAME "${NAME_}_UNLINKED.cubin")
   set(CUBIN_NAME "${NAME_}.cubin")
-  set(INCLUDE_DIRECTORIES "-I${NVSHMEM_PERFTEST_TLD}/common" "-I${NVSHMEM_PERFTEST_TLD}/../src/include/" "-I${NVSHMEM_PREFIX}/include")
+  set(INCLUDE_DIRECTORIES "-I${NVSHMEM_PERFTEST_TLD}/common" "-I${NVSHMEM_PERFTEST_TLD}/../src/include/" "-I${NVSHMEM_PREFIX}/include" "-I${CUDA_HOME}/include/cccl")
   if (NOT SubBuild)
     set(BITCODE_LIB_PATH ${NVSHMEM_PREFIX}/lib/libnvshmem_device.bc)
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${CUBIN_NAME}
-                      COMMAND clang -c -emit-llvm -std=c++11 -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
+                      COMMAND clang -c -emit-llvm -std=${BITCODE_CXX_STD} -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
                               --cuda-gpu-arch=${NVSHMEM_CLANG_ARCH} ${INCLUDE_DIRECTORIES} -DNVSHMEM_HOSTLIB_ONLY ${DIR_} -o ${NAME_}.bc.unoptimized
                       COMMAND llvm-link --only-needed ${NAME_}.bc.unoptimized ${BITCODE_LIB_PATH} -o ${NAME_}.bc.unoptimized.linked
                       COMMAND opt -O3 ${NAME_}.bc.unoptimized.linked -o ${NAME_}.bc
@@ -210,7 +216,7 @@ macro(nvshmem_add_cubin_perftest_prefix SOURCE PREFIX)
   else()
     set(BITCODE_LIB_PATH ${CMAKE_BINARY_DIR}/src/lib/libnvshmem_device.bc)
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${CUBIN_NAME}
-                      COMMAND clang -c -emit-llvm -std=c++11 -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
+                      COMMAND clang -c -emit-llvm -std=${BITCODE_CXX_STD} -x cuda --cuda-path=${CUDA_HOME} --cuda-device-only
                               --cuda-gpu-arch=${NVSHMEM_CLANG_ARCH} ${INCLUDE_DIRECTORIES} -DNVSHMEM_HOSTLIB_ONLY ${DIR_} -o ${NAME_}.bc.unoptimized
                       COMMAND llvm-link --only-needed ${NAME_}.bc.unoptimized ${BITCODE_LIB_PATH} -o ${NAME_}.bc.unoptimized.linked
                       COMMAND opt -O3 ${NAME_}.bc.unoptimized.linked -o ${NAME_}.bc

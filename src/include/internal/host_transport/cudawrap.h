@@ -29,6 +29,10 @@
 typedef CUresult(CUDAAPI *PFN_cuCtxSetFlags_v12010)(int flags);
 #endif
 
+#if CUDART_VERSION < 12080
+#define CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE 0x1
+#endif
+
 #if CUDART_VERSION < 11070
 #define CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED 124
 typedef enum CUmemRangeHandleType_enum {

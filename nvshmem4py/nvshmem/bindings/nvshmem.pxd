@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 #
-# See COPYRIGHT.txt for license information
+# See License.txt for license information
 #
 # This code was automatically generated from NVSHMEM with version 3.3.0. 
 # Modify it directly at your own risk.
@@ -36,6 +36,7 @@ ctypedef CUmodule Module
 ###############################################################################
 
 ctypedef nvshmemx_signal_op_t _Signal_op
+ctypedef nvshmemx_cmp_type_t _Cmp_type
 ctypedef nvshmemx_init_status_t _Init_status
 ctypedef nvshmem_team_id_t _Team_id
 ctypedef nvshmemx_status _Status

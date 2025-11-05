@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include <assert.h>
@@ -122,6 +122,7 @@ struct ibrc_device {
     struct ibv_mr *bpool_mr;
     struct ibv_cq *recv_cq;
     struct ibv_cq *send_cq;
+    bool data_direct;
 };
 
 struct ibrc_ep {
@@ -196,6 +197,11 @@ static bool is_egm = false;
 static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
 
+#ifdef NVSHMEM_USE_MLX5DV
+static struct nvshmemt_mlx5dv_function_table mlx5dv_ftable;
+static void *mlx5dv_handle;
+#endif
+
 int check_poll_avail(struct ibrc_ep *ep, int wait_predicate);
 int progress_send(transport_ibrc_state_t *ibrc_state);
 int poll_recv(transport_ibrc_state_t *ibrc_state);
@@ -260,10 +266,11 @@ static int get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     transport_ibrc_state_t *ibrc_state = (transport_ibrc_state_t *)transport->state;
     int dev_id = ibrc_state->dev_ids[dev];
-    const char *ib_name =
-        (const char *)((struct ibrc_device *)ibrc_state->devices)[dev_id].dev->name;
 
-    status = nvshmemt_ib_iface_get_mlx_path(ib_name, pci_path);
+    struct ibrc_device *device = &(((struct ibrc_device *)ibrc_state->devices)[dev_id]);
+    status = nvshmemt_ib_iface_get_mlx_path(device->dev, device->context, pci_path, &ftable,
+                                            &mlx5dv_ftable, &(device->data_direct),
+                                            ibrc_state->log_level);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmemt_ib_iface_get_mlx_path failed \n");
 
@@ -508,10 +515,12 @@ int nvshmemt_ibrc_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf, si
         alias_va_ptr = transport->alias_va_map->operator[](buf);
     }
 
+    INFO(ibrc_state->log_level, "[%d] IBRC: device used %s, data_direct support: %d",
+         transport->my_pe, device->dev->name, device->data_direct);
     status = nvshmemt_ib_common_reg_mem_handle(
-        &ftable, device->pd, mem_handle, buf, length, local_only, ibrc_state->dmabuf_support,
-        ibrc_state->table, ibrc_state->log_level, ibrc_state->options->IB_ENABLE_RELAXED_ORDERING,
-        alias_va_ptr);
+        &ftable, &mlx5dv_ftable, device->pd, mem_handle, buf, length, local_only,
+        ibrc_state->dmabuf_support, ibrc_state->table, ibrc_state->log_level,
+        ibrc_state->options->IB_ENABLE_RELAXED_ORDERING, device->data_direct, alias_va_ptr);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "Unable to register memory handle.");
 
@@ -803,6 +812,12 @@ int nvshmemt_ibrc_finalize(nvshmem_transport_t transport) {
     free(state);
 
     nvshmemt_ibv_ftable_fini(&ibv_handle);
+
+#ifdef NVSHMEM_USE_MLX5DV
+    if (mlx5dv_handle) {
+        nvshmemt_mlx5dv_ftable_fini(&mlx5dv_handle);
+    }
+#endif
 
 out:
     return status;
@@ -1646,6 +1661,26 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
                            "Unable to dlopen libibverbs. Skipping devx transport.");
     }
 
+#ifdef NVSHMEM_USE_MLX5DV
+    if (!ibrc_state->options->DISABLE_DATA_DIRECT) {
+        if (nvshmemt_mlx5dv_ftable_init(&mlx5dv_handle, &mlx5dv_ftable, ibrc_state->log_level)) {
+            NVSHMEMI_WARN_PRINT("Unable to dlopen libmlx5dv. Disabling directNIC features.");
+            // mlx5dv_handle will be NULL on failure
+            mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+            mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+            mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        }
+    } else {
+        mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+        mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+        mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        INFO(ibrc_state->log_level,
+             "directNIC features are disabled by NVSHMEM_DISABLE_DATA_DIRECT=1");
+    }
+#else
+    INFO(ibrc_state->log_level, "directNIC features are disabled");
+#endif
+
     ftable.fork_init();
 
     dev_list = ftable.get_device_list(&num_devices);
@@ -1677,6 +1712,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         use_gdrcopy = nvshmemt_gdrcopy_ftable_init(&gdrcopy_ftable, &gdr_desc, &gdrcopy_handle,
                                                    ibrc_state->log_level);
     }
+#else
 #endif
 
     ibrc_state->table = table;
@@ -1801,7 +1837,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
 
                 device_used = 1;
             }
-        }
+        }  // end of port loop
 
         if (!device_used) {
             status = ftable.close_device(device->context);
@@ -1844,6 +1880,13 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         status = get_pci_path(i, &transport->device_pci_paths[i], transport);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "Failed to get paths for PCI devices.");
+        if (((struct ibrc_device *)ibrc_state->devices)[ibrc_state->dev_ids[i]].data_direct &&
+            ibrc_state->options->IB_NUM_RC_PER_DEVICE < 4) {
+            // Need 4 QPs for achieving bandwidth in data direct device
+            ibrc_state->options->IB_NUM_RC_PER_DEVICE = 4;
+            INFO(ibrc_state->log_level,
+                 "Setting IB_NUM_RC_PER_DEVICE = 4 as data direct device is detected");
+        }
     }
 
     // print devices that were not found

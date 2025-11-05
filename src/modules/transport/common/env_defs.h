@@ -1,5 +1,5 @@
 /****
- * Copyright (c) 2016-2024, NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Copyright 2011 Sandia Corporation. Under the terms of Contract
  * DE-AC04-94AL85000 with Sandia Corporation, the U.S.  Government
@@ -10,7 +10,7 @@
  *
  * Portions of this file are derived from Sandia OpenSHMEM.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  ****/
 
 /* NVSHMEMI_ENV_DEF( name, kind, default, category, short description )
@@ -45,6 +45,8 @@ NVSHMEMI_ENV_DEF(DISABLE_IB_NATIVE_ATOMICS, bool, false, NVSHMEMI_ENV_CAT_TRANSP
                  "Disable use of InfiniBand native atomics")
 NVSHMEMI_ENV_DEF(DISABLE_GDRCOPY, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Disable use of GDRCopy in IB RC Transport")
+NVSHMEMI_ENV_DEF(DISABLE_DATA_DIRECT, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Disable use of directNIC in IB Transport")
 NVSHMEMI_ENV_DEF(IB_DISABLE_DMABUF, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Disable use of DMABUF in IBRC/IBDEVX/IBGDA Transports")
 NVSHMEMI_ENV_DEF(IB_GID_INDEX, int, -1, NVSHMEMI_ENV_CAT_TRANSPORT, "Source GID Index for ROCE")
@@ -67,6 +69,9 @@ NVSHMEMI_ENV_DEF(IB_NUM_RC_PER_DEVICE, int, 1, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Number of RC qpairs to create per device in the IB proxy-based transports."
                  "A device is each enumerated IB device, either a full HCA or a single port of a "
                  "multi-port HCA.")
+
+NVSHMEMI_ENV_DEF(HCA_PREFIX, string, "mlx5", NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Prefix of HCA interface names. Example, mlx5, ibp.")
 
 NVSHMEMI_ENV_DEF(HCA_LIST, string, "", NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Comma-separated list of HCAs to use in the NVSHMEM application. Entries "
@@ -140,10 +145,11 @@ NVSHMEMI_ENV_DEF(IBGDA_NUM_FETCH_SLOTS_PER_RC, int, 1024, NVSHMEMI_ENV_CAT_TRANS
                  "It will be rounded up to the nearest power of 2.")
 NVSHMEMI_ENV_DEF(IBGDA_NIC_HANDLER, string, "auto", NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Specifies the processor used for ringing NIC's DB. "
-                 "Choices are: auto, gpu, cpu.\n\n"
+                 "Choices are: auto, gpu, cpu, cpu_host_memory.\n\n"
                  "- auto: use GPU SMs and fallback to CPU if it is not supported (default).\n"
                  "- gpu: use GPU SMs.\n"
-                 "- cpu: use CPU.")
+                 "- cpu: use CPU with gdrcopy backend.\n"
+                 "- cpu_host_memory: use CPU with CUDA memory.")
 NVSHMEMI_ENV_DEF(IB_ENABLE_IBGDA, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Set to enable GPU-initiated communication transport.")
 #endif

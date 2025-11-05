@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 #
-# See COPYRIGHT.txt for license information
+# See License.txt for license information
 #
 # This code was automatically generated from NVSHMEM with version 3.3.0. 
 # Modify it directly at your own risk.
@@ -28,6 +28,15 @@ from libc.stdint cimport (
 ctypedef enum nvshmemx_signal_op_t "nvshmemx_signal_op_t":
     NVSHMEM_SIGNAL_SET "NVSHMEM_SIGNAL_SET" = 9
     NVSHMEM_SIGNAL_ADD "NVSHMEM_SIGNAL_ADD" = 10
+
+ctypedef enum nvshmemx_cmp_type_t "nvshmemx_cmp_type_t":
+    NVSHMEM_CMP_EQ "NVSHMEM_CMP_EQ" = 0
+    NVSHMEM_CMP_NE "NVSHMEM_CMP_NE"
+    NVSHMEM_CMP_GT "NVSHMEM_CMP_GT"
+    NVSHMEM_CMP_LE "NVSHMEM_CMP_LE"
+    NVSHMEM_CMP_LT "NVSHMEM_CMP_LT"
+    NVSHMEM_CMP_GE "NVSHMEM_CMP_GE"
+    NVSHMEM_CMP_SENTINEL "NVSHMEM_CMP_SENTINEL" = 32767
 
 ctypedef enum nvshmemx_init_status_t "nvshmemx_init_status_t":
     NVSHMEM_STATUS_NOT_INITIALIZED "NVSHMEM_STATUS_NOT_INITIALIZED" = 0

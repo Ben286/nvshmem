@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEMI_TEAM_INTERNAL_H_

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #include <stdio.h>

@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 #
-# See COPYRIGHT.txt for license information
+# See License.txt for license information
 #
 # This code was automatically generated from NVSHMEM with version 3.3.0. 
 # Modify it directly at your own risk.

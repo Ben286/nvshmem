@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2020-2021, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2020-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include "internal/host/nvshmem_nvtx.hpp"  // for nvtxOpt_t, ALLOC_OPT

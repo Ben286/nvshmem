@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2017-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include <assert.h>
@@ -143,11 +143,13 @@ out:
     return status;
 }
 
-int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle) {
+int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle,
+                   int *bootstrap_mode) {
     int status = NVSHMEMX_SUCCESS;
     const char *plugin_name = NULL;
 
     int mode = bootstrap_flag2mode(flags);
+    *bootstrap_mode = mode;
     switch (mode) {
         case BOOTSTRAP_MPI:
             plugin_name = nvshmemi_options.BOOTSTRAP_MPI_PLUGIN;

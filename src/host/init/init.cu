@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _GNU_SOURCE
@@ -43,6 +43,7 @@
 #include "internal/host/nvshmemi_types.h"
 #include "internal/host/shared_memory.h"
 #include "internal/host/nvshmemi_symmetric_heap.hpp"
+#include "internal/host/nvshmemi_mem_transport.hpp"
 
 extern __constant__ nvshmemi_device_host_state_t nvshmemi_device_state_d;
 static std::map<void *, int> registered_device_states;
@@ -70,6 +71,7 @@ static bool nvshmemi_is_device_state_ready;
 int nvshmemi_can_use_cuda_64_bit_stream_memops = false;
 int nvshmemi_can_flush_remote_writes = false;
 int nvshmemi_is_vmm_supported = false;
+int bootstrap_mode;
 FILE *nvshmem_debug_file = stdout;
 static char shm_name[100];
 nvshmemi_version_t nvshmemi_host_lib_version = {
@@ -333,7 +335,7 @@ int nvshmemi_bootstrap(int flags, nvshmemx_init_attr_t *nvshmem_attr) {
     bootstrap_attr_t attr = {};
     status = bootstrap_set_bootattr(flags, nvshmem_attr, (nvshmem_attr) ? &attr : NULL);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_set_bootattr failed \n");
-    status = bootstrap_init(flags, &attr, &nvshmemi_boot_handle);
+    status = bootstrap_init(flags, &attr, &nvshmemi_boot_handle, &bootstrap_mode);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "bootstrap_init failed \n");
     if (nvshmemi_default_session == nullptr) {
         nvshmemi_default_session = (nvshmemi_session_t *)calloc(sizeof(nvshmemi_session_t), 1);
@@ -1328,6 +1330,13 @@ void nvshmemid_hostlib_finalize(void *device_ctx, void *transport_device_ctx) {
         free(nvshmemi_state);
 
         /* Multi-init Multi-fini*/
+        free(nvshmemi_default_session);
+        nvshmemi_default_session = nullptr;
+        if (bootstrap_mode == BOOTSTRAP_UID) {
+            bootstrap_finalize();
+            nvshmemi_device_state.nvshmemi_is_nvshmem_bootstrapped = false;
+        }
+
         nvshmemi_state = NULL;
         nvshmemi_device_state.nvshmemi_is_nvshmem_initialized = 0;
         nvshmemi_is_device_state_ready = false;

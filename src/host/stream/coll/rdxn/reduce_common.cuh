@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2020-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2020-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 #ifndef __REDUCE_COMMON_CUH__
 #define __REDUCE_COMMON_CUH__

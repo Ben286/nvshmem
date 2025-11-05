@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 #
-# See COPYRIGHT.txt for license information
+# See License.txt for license information
 
 """
 The following are nvshmem.core APIs that can be used as-is
@@ -15,12 +15,22 @@ from their bindings
 
 import nvshmem.bindings as bindings
 
-__all__ = ["Teams", "my_pe", "team_my_pe", "team_n_pes", "n_pes", "team_n_pes"]
+__all__ = ["Teams", "my_pe", "team_my_pe", "team_n_pes", "n_pes", "team_n_pes", "ComparisonType", "SignalOp", "InitStatus"]
 
 """
 IntEnum which matches 1:1 with ``nvshmem_team_id_t``
 """
 Teams = bindings.Team_id
+
+"""
+IntEnum which matches 1:1 with ``nvshmemx_cmp_type_t``
+"""
+ComparisonType = bindings.Cmp_type
+
+"""
+IntEnum which matches 1:1 with the ``nvshmem_signal_op_t``
+"""
+SignalOp = bindings.Signal_op
 
 """
 IntEnum which matches 1:1 with ``nvshmem_init_status_t``

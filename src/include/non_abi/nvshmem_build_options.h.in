@@ -21,6 +21,7 @@
 #cmakedefine NVSHMEM_USE_DLMALLOC
 #cmakedefine NVSHMEM_USE_NCCL
 #cmakedefine NVSHMEM_USE_GDRCOPY
+#cmakedefine NVSHMEM_USE_MLX5DV
 #cmakedefine NVSHMEM_VERBOSE
 #cmakedefine NVSHMEM_BUILD_TESTS
 #cmakedefine NVSHMEM_BUILD_EXAMPLES

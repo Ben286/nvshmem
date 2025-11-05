@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _TRANSPORT_COMMON_H
@@ -65,6 +65,13 @@
         void **cast = (void **)&funcptr;   \
         void *tmp = dlsym(handle, symbol); \
         *cast = tmp;                       \
+    } while (0)
+
+#define LOAD_SYM_VERSION(handle, symbol, funcptr, version) \
+    do {                                                   \
+        void **cast = (void **)&funcptr;                   \
+        void *tmp = dlvsym(handle, symbol, version);       \
+        *cast = tmp;                                       \
     } while (0)
 
 static inline int nvshmemt_common_get_log_level(struct nvshmemi_options_s *options) {

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _TRANSPORT_IB_COMMON_H
@@ -13,7 +13,7 @@
 #include <netinet/in.h>                                          // for in6_...
 #include <stdint.h>                                              // for uint...
 #include <stdio.h>                                               // for NULL
-#include <stdlib.h>                                              // for getenv
+#include <stdlib.h>                                              // for strtol
 #include <string.h>                                              // for strlen
 #include <sys/socket.h>                                          // for AF_INET
 #include <sys/un.h>                                              // for sa_f...
@@ -21,9 +21,19 @@
 #include "bootstrap_host_transport/env_defs_internal.h"          // for nvsh...
 #include "infiniband/verbs.h"                                    // for ibv_gid
 #include "internal/host_transport/nvshmemi_transport_defines.h"  // for nvsh...
+#include "non_abi/nvshmem_build_options.h"                       // for NVSH...
 #include "non_abi/nvshmemx_error.h"                              // for NVSH...
-#include "transport_common.h"                                    // for nvsh...
+#include "transport_common.h"                                    // for INFO
 #include "transport_ib_common.h"                                 // lines 26-26
+
+#ifdef NVSHMEM_USE_MLX5DV
+#include <infiniband/mlx5dv.h>
+#ifndef MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT
+#define MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT 1
+#endif
+// MLX5DV Library versioning
+#define MLX5DV_VERSION "MLX5_1.8"
+#endif
 
 #define DIVUP(x, y) (((x) + (y)-1) / (y))
 
@@ -45,8 +55,6 @@ struct nvshmemt_ib_gid_info {
     union ibv_gid local_gid;
     int32_t local_gid_index;
 };
-
-int nvshmemt_ib_iface_get_mlx_path(const char *ib_name, char **path);
 
 struct nvshmemt_ibv_function_table {
     int (*fork_init)(void);
@@ -78,17 +86,42 @@ struct nvshmemt_ibv_function_table {
     int (*destroy_ah)(struct ibv_ah *ah);
 };
 
+struct nvshmemt_mlx5dv_function_table {
+    bool (*mlx5dv_internal_is_supported)(struct ibv_device *device);
+    int (*mlx5dv_internal_get_data_direct_sysfs_path)(struct ibv_context *context, char *buf,
+                                                      size_t buf_len);
+    /* DMA-BUF support */
+    struct ibv_mr *(*mlx5dv_internal_reg_dmabuf_mr)(struct ibv_pd *pd, uint64_t offset,
+                                                    size_t length, uint64_t iova, int fd,
+                                                    int access, int mlx5_access);
+};
+
+bool nvshmemt_mlx5dv_dmabuf_capable(ibv_context *context,
+                                    struct nvshmemt_ibv_function_table *ftable,
+                                    struct nvshmemt_mlx5dv_function_table *mlx5dv_ftable);
+
+int nvshmemt_ib_iface_get_mlx_path(ibv_device *dev, ibv_context *ctx, char **path,
+                                   struct nvshmemt_ibv_function_table *ftable,
+                                   struct nvshmemt_mlx5dv_function_table *mlx5dv_ftable,
+                                   bool *is_data_direct, int log_level);
+
 int nvshmemt_ibv_ftable_init(void **ibv_handle, struct nvshmemt_ibv_function_table *ftable,
                              int log_level);
 void nvshmemt_ibv_ftable_fini(void **ibv_handle);
 
+int nvshmemt_mlx5dv_ftable_init(void **mlx5dv_handle, struct nvshmemt_mlx5dv_function_table *ftable,
+                                int log_level);
+void nvshmemt_mlx5dv_ftable_fini(void **mlx5dv_handle);
+
 int nvshmemt_ib_common_nv_peer_mem_available();
 
-int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable, struct ibv_pd *pd,
-                                      nvshmem_mem_handle_t *mem_handle, void *buf, size_t length,
-                                      bool local_only, bool dmabuf_support,
-                                      struct nvshmemi_cuda_fn_table *table, int log_level,
-                                      bool relaxed_ordering, void *alias_va_ptr = NULL);
+int nvshmemt_ib_common_reg_mem_handle(struct nvshmemt_ibv_function_table *ftable,
+                                      struct nvshmemt_mlx5dv_function_table *mlx5dv_ftable,
+                                      struct ibv_pd *pd, nvshmem_mem_handle_t *mem_handle,
+                                      void *buf, size_t length, bool local_only,
+                                      bool dmabuf_support, struct nvshmemi_cuda_fn_table *table,
+                                      int log_level, bool relaxed_ordering, bool is_data_direct,
+                                      void *alias_va_ptr = NULL);
 
 int nvshmemt_ib_common_release_mem_handle(struct nvshmemt_ibv_function_table *ftable,
                                           nvshmem_mem_handle_t *mem_handle, int log_level);

@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include "ibdevx.h"
@@ -26,6 +26,7 @@
 #include "internal/host_transport/cudawrap.h"                // for CUPFN, nvshmemi_cuda_fn...
 #include "bootstrap_host_transport/env_defs_internal.h"      // for nvshmemi_options_s, nvs...
 #include "non_abi/nvshmemx_error.h"                          // for NVSHMEMX_ERROR_INTERNAL
+#include "non_abi/nvshmem_build_options.h"                   // for NVSHMEM_USE_MLX5DV
 #include "non_abi/nvshmem_version.h"
 #include "infiniband/mlx5dv.h"  // for DEVX_SET, mlx5_wqe_ctrl...
 #include "infiniband/verbs.h"   // for ibv_port_attr, ibv_ah_attr
@@ -95,6 +96,7 @@ struct ibdevx_device {
     struct ibv_cq *send_cq;
     int srqn;
     int pdn;
+    bool data_direct;
 };
 
 struct __attribute__((__packed__)) ibdevx_rw_inline_data_seg {
@@ -259,6 +261,11 @@ static int use_ib_native_atomics = 1;
 static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
 
+#ifdef NVSHMEM_USE_MLX5DV
+static struct nvshmemt_mlx5dv_function_table mlx5dv_ftable;
+static void *mlx5dv_handle;
+#endif
+
 int check_poll_avail(struct ibdevx_ep *ep, int wait_predicate);
 int progress_send(transport_ibdevx_state_t *ibdevx_state);
 
@@ -273,10 +280,11 @@ static int get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)transport->state;
     int dev_id = ibdevx_state->dev_ids[dev];
-    const char *ib_name =
-        (const char *)((struct ibdevx_device *)ibdevx_state->devices)[dev_id].dev->name;
 
-    status = nvshmemt_ib_iface_get_mlx_path(ib_name, pci_path);
+    struct ibdevx_device *device = &(((struct ibdevx_device *)ibdevx_state->devices)[dev_id]);
+    status = nvshmemt_ib_iface_get_mlx_path(device->dev, device->context, pci_path, &ftable,
+                                            &mlx5dv_ftable, &(device->data_direct),
+                                            ibdevx_state->log_level);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmemt_ib_iface_get_mlx_path failed \n");
 
@@ -847,10 +855,12 @@ int nvshmemt_ibdevx_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf, 
         alias_va_ptr = transport->alias_va_map->operator[](buf);
     }
 
+    INFO(ibdevx_state->log_level, "[%d] IBDEVX: device used %s, data_direct support: %d",
+         transport->my_pe, device->dev->name, device->data_direct);
     status = nvshmemt_ib_common_reg_mem_handle(
-        &ftable, device->pd, mem_handle, buf, length, local_only, ibdevx_state->dmabuf_support,
-        ibdevx_state->table, ibdevx_state->log_level,
-        ibdevx_state->options->IB_ENABLE_RELAXED_ORDERING, alias_va_ptr);
+        &ftable, &mlx5dv_ftable, device->pd, mem_handle, buf, length, local_only,
+        ibdevx_state->dmabuf_support, ibdevx_state->table, ibdevx_state->log_level,
+        ibdevx_state->options->IB_ENABLE_RELAXED_ORDERING, device->data_direct, alias_va_ptr);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "Unable to register memory handle.");
 
@@ -925,6 +935,11 @@ int nvshmemt_ibdevx_finalize(nvshmem_transport_t transport) {
     }
 
     nvshmemt_ibv_ftable_fini(&ibv_handle);
+#ifdef NVSHMEM_USE_MLX5DV
+    if (mlx5dv_handle) {
+        nvshmemt_mlx5dv_ftable_fini(&mlx5dv_handle);
+    }
+#endif
 
     status = pthread_mutex_destroy(&ibdevx_mutex_send_progress);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
@@ -1751,6 +1766,26 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
                            "Unable to dlopen libibverbs. Skipping devx transport.");
     }
 
+#ifdef NVSHMEM_USE_MLX5DV
+    if (!ibdevx_state->options->DISABLE_DATA_DIRECT) {
+        if (nvshmemt_mlx5dv_ftable_init(&mlx5dv_handle, &mlx5dv_ftable, ibdevx_state->log_level)) {
+            NVSHMEMI_WARN_PRINT("Unable to dlopen libmlx5dv. Disabling directNIC features.");
+            // mlx5dv_handle will be NULL on failure
+            mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+            mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+            mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        }
+    } else {
+        mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+        mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+        mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        INFO(ibdevx_state->log_level,
+             "directNIC features are disabled by NVSHMEM_DISABLE_DATA_DIRECT=1");
+    }
+#else
+    INFO(ibdevx_state->log_level, "directNIC features are disabled");
+#endif
+
     if (ibdevx_state->options->DISABLE_IB_NATIVE_ATOMICS) {
         use_ib_native_atomics = 0;
     }
@@ -1827,10 +1862,22 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         const char *name = ftable.get_device_name(device->dev);
         NVSHMEMI_NULL_ERROR_JMP(name, status, NVSHMEMX_ERROR_INTERNAL, out,
                                 "ibv_get_device_name failed \n");
-        if (!strstr(name, "mlx5")) {
+
+        const char *hca_prefix = ibdevx_state->options->HCA_PREFIX;
+        bool device_supported = false;
+
+        if (hca_prefix) {
+            device_supported = strstr(name, hca_prefix) != NULL;
+        } else {
+            device_supported = strstr(name, "mlx5") != NULL || strstr(name, "ibp") != NULL;
+        }
+
+        if (!device_supported) {
             ftable.close_device(device->context);
             device->context = NULL;
-            NVSHMEMI_WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
+            NVSHMEMI_WARN_PRINT(
+                "device %s is not supported (expected HCA interface: %s). Skipping...\n", name,
+                hca_prefix ? hca_prefix : "mlx5 or ibp");
             continue;
         }
 
@@ -1982,6 +2029,13 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         status = get_pci_path(i, &transport->device_pci_paths[i], transport);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "Failed to get paths for PCI devices.");
+        if (((struct ibdevx_device *)ibdevx_state->devices)[ibdevx_state->dev_ids[i]].data_direct &&
+            ibdevx_state->options->IB_NUM_RC_PER_DEVICE < 4) {
+            // Need 4 QPs for achieving bandwidth in data direct device
+            ibdevx_state->options->IB_NUM_RC_PER_DEVICE = 4;
+            INFO(ibdevx_state->log_level,
+                 "Setting IB_NUM_RC_PER_DEVICE = 4 as data direct device is detected");
+        }
     }
 
     // print devices that were not found

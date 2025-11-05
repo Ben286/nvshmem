@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 #
-# See COPYRIGHT.txt for license information
+# See License.txt for license information
 #
 # This code was automatically generated from NVSHMEM with version 3.3.0. 
 # Modify it directly at your own risk.
@@ -212,6 +212,16 @@ class Signal_op(_IntEnum):
     """See `nvshmemx_signal_op_t`."""
     SIGNAL_SET = NVSHMEM_SIGNAL_SET
     SIGNAL_ADD = NVSHMEM_SIGNAL_ADD
+
+class Cmp_type(_IntEnum):
+    """See `nvshmemx_cmp_type_t`."""
+    CMP_EQ = NVSHMEM_CMP_EQ
+    CMP_NE = NVSHMEM_CMP_NE
+    CMP_GT = NVSHMEM_CMP_GT
+    CMP_LE = NVSHMEM_CMP_LE
+    CMP_LT = NVSHMEM_CMP_LT
+    CMP_GE = NVSHMEM_CMP_GE
+    CMP_SENTINEL = NVSHMEM_CMP_SENTINEL
 
 class Init_status(_IntEnum):
     """See `nvshmemx_init_status_t`."""

@@ -1,5 +1,17 @@
 ===============================================================================
-                               Changes in 3.3.0
+                               Changes in 3.4.5
+===============================================================================
+# Added support for data direct NIC configurations in the IB transports.
+# Added a new environment variable, `NVSHMEM_DISABLE_DATA_DIRECT`, to force disable data direct NIC even when present.
+# Added support for CPU-Assisted IBGDA without the use of GDRCopy or the x86 regkey. 
+Systems not supporting the other methods will automatically fall back to this new method.
+It enables the use of IBGDA on a broad range of systems without the need for administrator intervention.
+# Added a new environment variable `NVSHMEM_HCA_PREFIX` to enable IB transports on systems which 
+name their HCA devices in a non-standard way (for example, `ipb*` instead of `mlx5*`).
+# Deprecated support for the combined `libnvshmem.a` host and device static library. See the Release Notes for more details.
+
+===============================================================================
+                               Changes in 3.3.9
 ===============================================================================
 # Enabled GA platform support for Blackwell B200/GB200NVL72-based systems. Additionally, enabled SASS support for Ada architecture.
 # Added support for official python language bindings (`nvshmem4py`) enabling symmetric memory management, on-stream RMA and collective APIs

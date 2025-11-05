@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 #include <assert.h>
 #include <pthread.h>
@@ -587,6 +587,11 @@ int bootstrap_uid_close(struct bootstrap_handle* handle) {
             BOOTSTRAP_ERROR_PRINT("Unexpected connections are not empty");
             return BOOTSTRAP_INTERNAL_ERROR;
         }
+    }
+
+    if (handle->pre_init_ops != nullptr) {
+        BOOTSTRAP_PTR_FREE(handle->pre_init_ops);
+        handle->pre_init_ops = nullptr;
     }
 
     BOOTSTRAP_CHECK(nccl_fn_table(close, &state->listen_sock));

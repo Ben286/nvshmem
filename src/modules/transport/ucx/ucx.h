@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _UCX_H
