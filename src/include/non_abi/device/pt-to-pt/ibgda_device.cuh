@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEMI_IBGDA_DEVICE_H_
@@ -456,7 +456,7 @@ __device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE int ibgda_poll_cq(
     nvshmemi_ibgda_device_cq_t *cq, uint64_t idx, int *error) {
     int status = 0;
     struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)cq->cqe;
-
+    nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
     const uint32_t ncqes = cq->ncqes;
 
     uint8_t opown;
@@ -1626,6 +1626,26 @@ __device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_post_send(
     ibgda_lock_release<NVSHMEMI_THREADGROUP_THREAD>(&mvars->post_send_lock);
 }
 
+template <bool need_strong_flush>
+__device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_proxy_post_send(
+    nvshmemi_ibgda_device_qp_t *qp, uint64_t new_prod_idx) {
+    nvshmemi_ibgda_device_qp_management_t *mvars = &qp->mvars;
+    uint64_t old_prod_idx;
+
+    if (need_strong_flush) {
+        old_prod_idx = atomicMax((unsigned long long int *)&mvars->tx_wq.prod_idx,
+                                 (unsigned long long int)new_prod_idx);
+    } else {
+        old_prod_idx = atomicMax_block((unsigned long long int *)&mvars->tx_wq.prod_idx,
+                                       (unsigned long long int)new_prod_idx);
+    }
+
+    if (likely(new_prod_idx > old_prod_idx)) {
+        atomicMax_system((unsigned long long int *)qp->tx_wq.bf,
+                         (unsigned long long int)new_prod_idx);
+    }
+}
+
 // If `qp` is shared among CTAs, need_strong_flush must be set to true because
 // we must push prior writes from this CTA to L2 before coalescing DB.
 template <bool need_strong_flush>
@@ -1637,51 +1657,47 @@ __device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE void ibgda_submit_reque
 
     uint64_t new_wqe_idx = base_wqe_idx + num_wqes;
 
-    unsigned long long int *ready_idx =
-        (unsigned long long int *)(state->use_async_postsend ? qp->tx_wq.prod_idx
-                                                             : &mvars->tx_wq.ready_head);
-
-    // WQE writes must be finished first.
-    if (need_strong_flush)
-        // membar from a different CTA does not push prior writes of this CTA.
-        // We must push them out first because a different CTA might post-send for us.
-        IBGDA_MEMBAR_NO_OPTIMIZATION();
-    else
-        // It is ok for those wqes to not be visible to the GPU scope yet.
-        // ibgda_post_send will take care of that (if we choose to call it).
-        IBGDA_MFENCE();
+    unsigned long long int *ready_idx = (unsigned long long int *)(&mvars->tx_wq.ready_head);
 
     // Wait for prior WQE slots to be filled first.
     // They might not be post-sent yet.
-    if (need_strong_flush)
+    if (need_strong_flush) {
+        // membar from a different CTA does not push prior writes of this CTA.
+        // We must push them out first because a different CTA might post-send for us.
+        IBGDA_MEMBAR_NO_OPTIMIZATION();
         while (atomicCAS(ready_idx, (unsigned long long int)base_wqe_idx,
                          (unsigned long long int)new_wqe_idx) != base_wqe_idx)
-            ;  // wait here
-    else
+            ;
+        IBGDA_MFENCE();
+    } else {
+        // It is ok for those wqes to not be visible to the GPU scope yet.
+        // ibgda_post_send will take care of that (if we choose to call it).
+        IBGDA_MFENCE();
         while (atomicCAS_block(ready_idx, (unsigned long long int)base_wqe_idx,
                                (unsigned long long int)new_wqe_idx) != base_wqe_idx)
-            ;  // wait here
+            ;
+        IBGDA_MFENCE();
+    }
 
-    IBGDA_MFENCE();
+    bool do_post_send =
+        (new_wqe_idx == ibgda_atomic_read(&mvars->tx_wq.resv_head))  // No concurrent submissions
+        || ((base_wqe_idx & mask) !=
+            (new_wqe_idx & mask))  // Num of not-yet-posted wqes is beyond the threshold.
+        || (num_wqes >= state->num_requests_in_batch);  // The number of wqes in this submission
+                                                        // reaches the threshold.
 
-    if (!state->use_async_postsend) {
-        bool do_post_send =
-            (new_wqe_idx ==
-             ibgda_atomic_read(&mvars->tx_wq.resv_head))  // No concurrent submissions
-            || ((base_wqe_idx & mask) !=
-                (new_wqe_idx & mask))  // Num of not-yet-posted wqes is beyond the threshold.
-            || (num_wqes >= state->num_requests_in_batch);  // The number of wqes in this submission
-                                                            // reaches the threshold.
-
-        if (do_post_send) ibgda_post_send<need_strong_flush>(qp, new_wqe_idx);
+    if (do_post_send) {
+        if (!state->use_async_postsend)
+            ibgda_post_send<need_strong_flush>(qp, new_wqe_idx);
+        else {
+            ibgda_proxy_post_send<need_strong_flush>(qp, new_wqe_idx);
+        }
     }
 }
 
 __device__ NVSHMEMI_STATIC NVSHMEMI_DEVICE_ALWAYS_INLINE uint64_t
 ibgda_quiet(nvshmemi_ibgda_device_qp_t *qp) {
-    nvshmemi_ibgda_device_state_t *state = ibgda_get_state();
-    uint64_t prod_idx = state->use_async_postsend ? ibgda_atomic_read(qp->tx_wq.prod_idx)
-                                                  : ibgda_atomic_read(&qp->mvars.tx_wq.ready_head);
+    uint64_t prod_idx = ibgda_atomic_read(&qp->mvars.tx_wq.ready_head);
     nvshmemi_ibgda_device_cq_t cq = *qp->tx_wq.cq;
 
     int err = 0;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #include <stdio.h>
@@ -100,9 +100,14 @@ int main(int argc, char *argv[]) {
         status = -1;
         goto finalize;
     }
-
-    data_d = (char *)nvshmem_malloc(max_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
+    if (use_mmap) {
+        data_d = (char *)allocate_mmap_buffer(max_size, mem_handle_type, use_egm, true);
+        DEBUG_PRINT("Allocated mmap buffer\n");
+    } else {
+        data_d = (char *)nvshmem_malloc(max_size);
+        DEBUG_PRINT("Allocated nvshmem malloc buffer\n");
+        CUDA_CHECK(cudaMemset(data_d, 0, max_size));
+    }
 
     data_h_local = (double *)malloc(sizeof(double));
     if (!data_h_local) {
@@ -115,10 +120,17 @@ int main(int argc, char *argv[]) {
 
 #ifdef _NVSHMEM_REGISTRATION_CACHE_ENABLED
     CUDA_CHECK(cudaMalloc((void **)&data_d_local, max_size));
-#else
-    data_d_local = (char *)nvshmem_malloc(max_size);
-#endif
     CUDA_CHECK(cudaMemset(data_d_local, 0, max_size));
+#else
+    if (use_mmap) {
+        data_d_local = (char *)allocate_mmap_buffer(max_size, mem_handle_type, use_egm, true);
+        DEBUG_PRINT("Allocated mmap buffer\n");
+    } else {
+        data_d_local = (char *)nvshmem_malloc(max_size);
+        DEBUG_PRINT("Allocated nvshmem malloc buffer\n");
+        CUDA_CHECK(cudaMemset(data_d_local, 0, max_size));
+    }
+#endif
 
     cudaStream_t strm;
     CUDA_CHECK(cudaStreamCreateWithFlags(&strm, cudaStreamNonBlocking));
@@ -157,14 +169,26 @@ int main(int argc, char *argv[]) {
 finalize:
     CUDA_CHECK(cudaStreamDestroy(strm));
 
-    if (data_d) nvshmem_free(data_d);
+    if (data_d) {
+        if (use_mmap) {
+            free_mmap_buffer(data_d);
+        } else {
+            nvshmem_free(data_d);
+        }
+    }
     if (size_array) free(size_array);
     if (latency_array) free(latency_array);
 
 #ifdef _NVSHMEM_REGISTRATION_CACHE_ENABLED
     if (data_d_local) cudaFree(data_d_local);
 #else
-    if (data_d_local) nvshmem_free(data_d_local);
+    if (data_d_local) {
+        if (use_mmap) {
+            free_mmap_buffer(data_d_local);
+        } else {
+            nvshmem_free(data_d_local);
+        }
+    }
 #endif
 
     finalize_wrapper();

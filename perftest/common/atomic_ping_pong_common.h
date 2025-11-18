@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #ifndef _ATOMIC_PING_PONG_COMMON_H_
@@ -111,7 +111,11 @@
         h_size_arr = (uint64_t *)h_tables[0];                                                \
         h_lat = (double *)h_tables[1];                                                       \
                                                                                              \
-        flag_d = nvshmem_malloc(sizeof(uint64_t));                                           \
+        if (use_mmap) {                                                                      \
+            flag_d = allocate_mmap_buffer(sizeof(uint64_t), mem_handle_type, use_egm);       \
+        } else {                                                                             \
+            flag_d = nvshmem_malloc(sizeof(uint64_t));                                       \
+        }                                                                                    \
         CUDA_CHECK(cudaMemset(flag_d, 0, sizeof(uint64_t)));                                 \
                                                                                              \
         CUDA_CHECK(cudaStreamCreate(&stream));                                               \

@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 /*
@@ -22,7 +22,7 @@
 #include <cuda_runtime.h>
 
 #include "non_abi/nvshmem_build_options.h"
-#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#if defined(NVSHMEM_ENABLE_ALL_DEVICE_INLINING) || defined(__NVSHMEM_NUMBA_SUPPORT__)
 #include "non_abi/device/pt-to-pt/transfer_device.cuh"
 #else
 #include "non_abi/device/pt-to-pt/nvshmemi_transfer_api.cuh"

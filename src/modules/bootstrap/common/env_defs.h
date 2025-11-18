@@ -1,5 +1,5 @@
 /****
- * Copyright (c) 2016-2024, NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Copyright 2011 Sandia Corporation. Under the terms of Contract
  * DE-AC04-94AL85000 with Sandia Corporation, the U.S.  Government
@@ -10,7 +10,7 @@
  *
  * Portions of this file are derived from Sandia OpenSHMEM.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  ****/
 
 /* NVSHMEMI_ENV_DEF( name, kind, default, category, short description )

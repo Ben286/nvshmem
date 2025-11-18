@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef NVSHMEMI_BOOTSTRAP_LIBRARY_H
@@ -22,7 +22,8 @@ typedef struct bootstrap_attr {
 
 int bootstrap_set_bootattr(int flags, void *nvshmem_attr, bootstrap_attr_t *boot_attr);
 int bootstrap_preinit(int flags, bootstrap_handle_t *handle);
-int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle);
+int bootstrap_init(int flags, bootstrap_attr_t *attr, bootstrap_handle_t *handle,
+                   int *bootstrap_mode);
 void bootstrap_finalize();
 
 int bootstrap_loader_preinit(const char *plugin, bootstrap_handle_t *handle);

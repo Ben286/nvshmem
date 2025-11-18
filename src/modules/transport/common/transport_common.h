@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _TRANSPORT_COMMON_H
@@ -9,8 +9,9 @@
 
 #define __STDC_FORMAT_MACROS 1
 
-#include <stdio.h>                                       // for fprintf, stderr
-#include <strings.h>                                     // for strncasecmp
+#include <stdio.h>    // for fprintf, stderr
+#include <strings.h>  // for strncasecmp
+#include <unordered_map>
 #include "bootstrap_host_transport/env_defs_internal.h"  // for nvshmemi_opt...
 #include "internal/host_transport/transport.h"           // for nvshmem_tran...
 
@@ -66,6 +67,13 @@
         *cast = tmp;                       \
     } while (0)
 
+#define LOAD_SYM_VERSION(handle, symbol, funcptr, version) \
+    do {                                                   \
+        void **cast = (void **)&funcptr;                   \
+        void *tmp = dlvsym(handle, symbol, version);       \
+        *cast = tmp;                                       \
+    } while (0)
+
 static inline int nvshmemt_common_get_log_level(struct nvshmemi_options_s *options) {
     if (!options->DEBUG_provided && !options->DEBUG_SUBSYS_provided) {
         return TRANSPORT_LOG_NONE;
@@ -112,6 +120,7 @@ int nvshmemt_mem_handle_cache_remove(nvshmem_transport_t t,
                                      struct transport_mem_handle_info_cache *cache, void *addr);
 int nvshmemt_mem_handle_cache_fini(struct transport_mem_handle_info_cache *cache);
 
+bool check_egm(void *addr, std::unordered_map<void *, size_t> *egm_map);
 extern "C" {
 int nvshmemt_init(nvshmem_transport_t *transport, struct nvshmemi_cuda_fn_table *table,
                   int api_version);

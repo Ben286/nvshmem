@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEM_COMMON_H_
@@ -38,7 +38,7 @@
 #ifdef __clang_llvm_bitcode_lib__
 #define NVSHMEMI_DEVICE_PREFIX __device__
 extern "C" {
-__device__ int __nvvm_reflect(const char *s);
+__device__ unsigned int __attribute__((noreturn)) __nvvm_reflect(const char *s);
 }
 #else
 #define NVSHMEMI_DEVICE_PREFIX __device__
@@ -401,7 +401,7 @@ enum nvshmemi_call_site_id {
     NVSHMEMI_CALL_SITE_SENTINEL = INT_MAX
 };
 
-enum {
+typedef enum {
     NVSHMEM_TEAM_INVALID = -1,
     NVSHMEM_TEAM_WORLD = 0,
     NVSHMEM_TEAM_WORLD_INDEX = 0,
@@ -417,7 +417,7 @@ enum {
     NVSHMEM_TEAM_GPU_LEADERS_INDEX = 5,
     NVSHMEM_TEAMS_MIN = 6,
     NVSHMEM_TEAM_INDEX_MAX = INT_MAX
-};
+} nvshmem_team_id_t;
 
 /* Start shared connectivity constants */
 #define SYNC_SIZE 27648 /*XXX:Number of GPUs on Summit; currently O(N), need to be O(1)*/
@@ -501,6 +501,7 @@ typedef void (*nvshmemx_device_lib_init_cb)(void **dev_state_ptr, void **transpo
 #if defined __cplusplus
 extern "C" {
 #endif
+#if !defined __CUDACC_RTC__
 int nvshmemid_hostlib_init_attr(int requested, int *provided, unsigned int bootstrap_flags,
                                 nvshmemx_init_attr_t *attr,
                                 nvshmemi_version_t nvshmem_device_lib_version,
@@ -508,6 +509,7 @@ int nvshmemid_hostlib_init_attr(int requested, int *provided, unsigned int boots
 void nvshmemid_hostlib_finalize(void *device_ctx, void *transport_device_ctx);
 
 int nvshmemid_init_status();
+#endif
 #if defined __cplusplus
 }
 #endif

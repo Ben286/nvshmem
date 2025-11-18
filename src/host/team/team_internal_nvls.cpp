@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include <assert.h>                                              // for assert
@@ -62,7 +62,7 @@ nvshmemi_nvls_rsc::nvshmemi_nvls_rsc(nvshmemi_team_t *team, nvshmemi_state_t *st
     state_ = state;
     alloc_granularity_ = state->heap_obj->get_mem_granularity();
     alloc_mem_handle_type_ = state->heap_obj->get_mem_handle_type();
-    virt_alloc_size_ = state->heap_obj->get_reserve_size();
+    virt_alloc_size_ = state->heap_obj->get_logical_heap_size();
     n_devices_ = team->size;
 
 out:

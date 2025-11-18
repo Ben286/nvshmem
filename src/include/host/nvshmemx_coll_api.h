@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEMX_COLL_API_H_
@@ -115,6 +115,7 @@ __device__ int nvshmemx_alltoallmem_block(nvshmem_team_t team, void *dest, const
 // barrier collectives
 __device__ int nvshmemx_barrier_warp(nvshmem_team_t team);
 __device__ void nvshmemx_barrier_all_warp();
+__device__ int nvshmemx_barrier_warpgroup(nvshmem_team_t team);
 __device__ int nvshmemx_barrier_block(nvshmem_team_t team);
 __device__ void nvshmemx_barrier_all_block();
 
@@ -132,6 +133,11 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_BROADCAST
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_BROADCAST_SCOPE, block)
 #undef DECL_NVSHMEMX_TYPENAME_BROADCAST_SCOPE
 
+__device__ int nvshmemx_broadcastmem_warp(nvshmem_team_t team, void *dest, const void *src,
+                                          size_t nelem);
+__device__ int nvshmemx_broadcastmem_block(nvshmem_team_t team, void *dest, const void *src,
+                                           size_t nelem);
+
 // fcollect collectives
 #define DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE(SCOPE, TYPENAME, TYPE)                       \
     __device__ int nvshmemx_##TYPENAME##_fcollect_##SCOPE(nvshmem_team_t team, TYPE *dest, \
@@ -139,6 +145,11 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_BROADCAST
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE, warp)
 NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WITH_SCOPE(DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE, block)
 #undef DECL_NVSHMEMX_TYPENAME_FCOLLECT_SCOPE
+
+__device__ int nvshmemx_fcollectmem_warp(nvshmem_team_t team, void *dest, const void *src,
+                                         size_t nelem);
+__device__ int nvshmemx_fcollectmem_block(nvshmem_team_t team, void *dest, const void *src,
+                                          size_t nelem);
 
 // reduction collectives
 #define DECL_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP(SCOPE, TYPENAME, TYPE, OP) \

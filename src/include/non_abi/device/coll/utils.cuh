@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2017-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEMI_DEVICE_COLL_UTILS_H_
@@ -14,7 +14,8 @@
 #include <cuda/std/type_traits>
 #endif
 #include "non_abi/nvshmem_build_options.h"
-#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#include "device/nvshmem_device_macros.h"
+#if defined(NVSHMEM_ENABLE_ALL_DEVICE_INLINING) || defined(__NVSHMEM_NUMBA_SUPPORT__)
 #include "non_abi/device/pt-to-pt/transfer_device.cuh"
 #else
 #include "non_abi/device/pt-to-pt/nvshmemi_transfer_api.cuh"

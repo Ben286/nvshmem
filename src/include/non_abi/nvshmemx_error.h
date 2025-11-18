@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,16 +7,23 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEMX_ERROR_H_
 #define _NVSHMEMX_ERROR_H_
+#if !defined __CUDACC_RTC__
 #include <errno.h>  // for errno
 #include <limits.h>
 #include <stdio.h>   // for stderr, stdout, NULL
 #include <string.h>  // IWYU pragma: keep for strerror
 #include <stdlib.h>  // IWYU pragma: keep for exit
+#else
+#define fprintf(...)
+#define exit(...)
+#include <cuda/std/climits>
+#include <cuda/std/cstdlib>
+#endif
 
 /* The !! idiom is used to convert non-boolean types to booleans.
  * Doing so in this case allows us to ensure that __builtin_expect

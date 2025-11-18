@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef NVSHMEMI_BARRIER_CPU_H

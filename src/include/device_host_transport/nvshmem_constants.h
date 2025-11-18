@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEM_CONSTANTS_H_
@@ -43,7 +43,7 @@
 
 #define NVSHMEM_MAX_NAME_LEN 256
 
-enum nvshmemi_cmp_type {
+typedef enum nvshmemi_cmp_type {
     NVSHMEM_CMP_EQ = 0,
     NVSHMEM_CMP_NE,
     NVSHMEM_CMP_GT,
@@ -51,7 +51,7 @@ enum nvshmemi_cmp_type {
     NVSHMEM_CMP_LT,
     NVSHMEM_CMP_GE,
     NVSHMEM_CMP_SENTINEL = INT_MAX,
-};
+} nvshmemx_cmp_type_t;
 
 enum nvshmemi_thread_support {
     NVSHMEM_THREAD_SINGLE = 0,
@@ -73,13 +73,13 @@ enum {
 #define PROXY_AMO_REQ_BYTES 40
 #define PROXY_INLINE_REQ_BYTES 24
 
-enum {
+typedef enum {
     NVSHMEM_STATUS_NOT_INITIALIZED = 0,
     NVSHMEM_STATUS_IS_BOOTSTRAPPED,
     NVSHMEM_STATUS_IS_INITIALIZED,
     NVSHMEM_STATUS_LIMITED_MPG,
     NVSHMEM_STATUS_FULL_MPG,
     NVSHMEM_STATUS_INVALID = INT_MAX,
-};
+} nvshmemx_init_status_t;
 
 #endif

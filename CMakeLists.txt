@@ -48,14 +48,20 @@ endif()
 project(
   NVSHMEM
   LANGUAGES CUDA CXX C
-  VERSION 3.2.5.1
+  VERSION 3.4.5.0
 )
+
+if(NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang") OR
+   NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
+  message(FATAL_ERROR "NVSHMEM only supports compilation with GNU (gcc) or Clang compilers.")
+endif()
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set_property(CACHE CMAKE_INSTALL_PREFIX PROPERTY VALUE "${NVSHMEM_PREFIX}")
 endif()
 
 find_package(CUDAToolkit)
+find_package(CCCL PATHS ${CUDAToolkit_LIBRARY_DIR}/cmake/cccl)
 
 if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
   if(NOT DEFINED CUDA_ARCHITECTURES_UNDEFINED)
@@ -66,9 +72,11 @@ if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
     elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 AND CUDAToolkit_VERSION_MINOR LESS 8)
       set(CMAKE_CUDA_ARCHITECTURES "70-real;80" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 OR (CUDAToolkit_VERSION_MAJOR EQUAL 12 AND CUDAToolkit_VERSION_MINOR LESS 8))
-      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+    elseif(CUDAToolkit_VERSION_MAJOR EQUAL 13)
+      set(CMAKE_CUDA_ARCHITECTURES "75-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     else()
-      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;90-real;100" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     endif()
   endif()
 endif()
@@ -161,3 +169,15 @@ write_basic_package_version_file(
   COMPATIBILITY AnyNewerVersion)
 
 add_subdirectory(src)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# If Python3 version is lower than 3.9, we can't build nvshmem4py
+# Avoid breaking other stuff by turning off the python lib if this is the case
+if(Python3_VERSION VERSION_LESS "3.9")
+    message("Disabling Python library build due to insufficient version")
+    set(NVSHMEM_BUILD_PYTHON_LIB OFF)
+endif()
+
+if (NVSHMEM_BUILD_PYTHON_LIB)
+  add_subdirectory(nvshmem4py)
+endif()

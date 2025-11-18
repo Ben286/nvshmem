@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include "p2p.h"
@@ -254,7 +254,7 @@ int nvshmemt_p2p_init(nvshmem_transport_t *t) {
     NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,
                           "cuCtxGetDevice failed \n");
 
-    p2p_state->hostHash = getHostHash();
+    p2p_state->hostHash = nvshmemu_getHostHash();
 
     status = cudaGetDeviceCount(&p2p_state->ndev);
     NVSHMEMI_NE_ERROR_JMP(status, CUDA_SUCCESS, NVSHMEMX_ERROR_INTERNAL, out,

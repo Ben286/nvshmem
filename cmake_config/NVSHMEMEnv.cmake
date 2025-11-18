@@ -44,11 +44,14 @@ nvshmem_add_default_on_option(NVSHMEM_IBRC_SUPPORT "Enable compilation of the IB
 
 message( "\n__FUNCTIONALITY__\n")
 nvshmem_add_default_on_option(NVSHMEM_USE_GDRCOPY "Enable compilation of GDRCopy offload paths for atomics in remote transports")
+nvshmem_add_default_on_option(NVSHMEM_USE_MLX5DV "Enable directNIC feature")
 nvshmem_add_default_on_option(NVSHMEM_NVTX "Enable NVSHMEM NVTX support")
 
 message( "\n__BUILD__\n")
 nvshmem_add_default_on_option(NVSHMEM_BUILD_TESTS "Build tests")
 nvshmem_add_default_on_option(NVSHMEM_BUILD_EXAMPLES "Build examples")
+nvshmem_add_default_off_option(NVSHMEM_BUILD_CUTLASS_EXAMPLES "Build CUTLASS examples")
+nvshmem_add_default_on_option(NVSHMEM_BUILD_PYTHON_LIB "Builds NVSHMEM4PY Wheels and Python source tarballs")
 message( "___________________________________________________________________________________________________\n\n")
 
 message( "Options set to OFF by Default")

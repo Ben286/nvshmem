@@ -41,6 +41,8 @@ project(
 )
 
 find_package(CUDAToolkit)
+find_package(CCCL PATHS ${CUDAToolkit_LIBRARY_DIR}/cmake/cccl)
+message(STATUS "CUDAToolkit_LIBRARY_DIR: ${CUDAToolkit_LIBRARY_DIR}")
 
 if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
   if(NOT DEFINED CUDA_ARCHITECTURES_UNDEFINED)
@@ -51,9 +53,11 @@ if(DEFINED CMAKE_CUDA_ARCHITECTURES_UNDEFINED)
     elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 AND CUDAToolkit_VERSION_MINOR LESS 8)
       set(CMAKE_CUDA_ARCHITECTURES "70-real;80" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     elseif(CUDAToolkit_VERSION_MAJOR EQUAL 11 OR (CUDAToolkit_VERSION_MAJOR EQUAL 12 AND CUDAToolkit_VERSION_MINOR LESS 8))
-      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+    elseif(CUDAToolkit_VERSION_MAJOR EQUAL 13)
+      set(CMAKE_CUDA_ARCHITECTURES "75-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     else()
-      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;90-real;100" CACHE STRING "CUDA ARCHITECTURES" FORCE)
+      set(CMAKE_CUDA_ARCHITECTURES "70-real;80-real;89-real;90-real;100-real;120" CACHE STRING "CUDA ARCHITECTURES" FORCE)
     endif()
   endif()
 endif()
@@ -61,6 +65,12 @@ message(STATUS "CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "CMAKE_CUDA_COMPILER: ${CMAKE_CUDA_COMPILER}")
 message(STATUS "NVSHMEM_PREFIX: ${NVSHMEM_PREFIX}")
 message(STATUS "NVSHMEM_DEBUG: ${NVSHMEM_DEBUG}")
+
+if(CUDAToolkit_VERSION_MAJOR LESS 13)
+  set(LIB_CXX_STANDARD 11)
+else()
+  set(LIB_CXX_STANDARD 17)
+endif()
 
 install(
   EXPORT NVSHMEMDeviceTargets
@@ -87,7 +97,7 @@ set_target_properties(nvshmem_device
                       PROPERTIES POSITION_INDEPENDENT_CODE ON
                       CXX_STANDARD_REQUIRED ON
                       CUDA_STANDARD_REQUIRED ON
-                      CXX_STANDARD 11
+                      CXX_STANDARD "${LIB_CXX_STANDARD}"
                       CUDA_STANDARD 11
                       CUDA_SEPARABLE_COMPILATION ON
                       LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/../lib"
@@ -152,6 +162,9 @@ else()
 endif()
 
 target_link_libraries(nvshmem_device PRIVATE CUDA::cudart_static)
+if (CCCL_FOUND AND CUDAToolkit_VERSION_MAJOR GREATER 12)
+  target_link_libraries(nvshmem_device PUBLIC CCCL::CCCL)
+endif()
 
 if(NVSHMEM_USE_NCCL)
   target_include_directories(nvshmem_device PRIVATE ${NCCL_INCLUDE})

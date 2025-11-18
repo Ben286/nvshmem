@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #include <stdio.h>
@@ -166,11 +166,23 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    data_d = (char *)nvshmem_malloc(max_msg_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    if (use_mmap) {
+        data_d = (char *)allocate_mmap_buffer(max_msg_size, mem_handle_type, use_egm, true);
+        DEBUG_PRINT("Allocated mmap buffer\n");
+    } else {
+        data_d = (char *)nvshmem_malloc(max_msg_size);
+        DEBUG_PRINT("Allocated nvshmem malloc buffer\n");
+        CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    }
 
-    data_d_local = (char *)nvshmem_malloc(max_msg_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_msg_size));
+    if (use_mmap) {
+        data_d_local = (char *)allocate_mmap_buffer(max_msg_size, mem_handle_type, use_egm, true);
+        DEBUG_PRINT("Allocated mmap buffer\n");
+    } else {
+        data_d_local = (char *)nvshmem_malloc(max_msg_size);
+        DEBUG_PRINT("Allocated nvshmem malloc buffer\n");
+        CUDA_CHECK(cudaMemset(data_d_local, 0, max_msg_size));
+    }
 
     cudaStream_t strm;
     CUDA_CHECK(cudaStreamCreateWithFlags(&strm, cudaStreamNonBlocking));
@@ -209,12 +221,24 @@ int main(int argc, char *argv[]) {
 finalize:
     CUDA_CHECK(cudaStreamDestroy(strm));
 
-    if (data_d) nvshmem_free(data_d);
+    if (data_d) {
+        if (use_mmap) {
+            free_mmap_buffer(data_d);
+        } else {
+            nvshmem_free(data_d);
+        }
+    }
     if (size_array) free(size_array);
     if (ons_latency_array) free(ons_latency_array);
     if (offs_latency_array) free(offs_latency_array);
 
-    if (data_d_local) nvshmem_free(data_d_local);
+    if (data_d_local) {
+        if (use_mmap) {
+            free_mmap_buffer(data_d_local);
+        } else {
+            nvshmem_free(data_d_local);
+        }
+    }
 
     finalize_wrapper();
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEM_API_H_
@@ -471,6 +471,10 @@ NVSHMEMI_HOSTDEVICE_PREFIX int nvshmem_team_translate_pe(nvshmem_team_t src_team
 int nvshmem_team_split_strided(nvshmem_team_t parent_team, int PE_start, int PE_stride, int PE_size,
                                const nvshmem_team_config_t *config, long config_mask,
                                nvshmem_team_t *new_team);
+
+int nvshmemx_team_get_uniqueid(nvshmemx_team_uniqueid_t *uniqueid);
+int nvshmemx_team_init(nvshmem_team_t *team, nvshmem_team_config_t *config, long config_mask,
+                       int npes, int pe_idx_in_team);
 int nvshmem_team_split_2d(nvshmem_team_t parent_team, int xrange,
                           const nvshmem_team_config_t *xaxis_config, long xaxis_mask,
                           nvshmem_team_t *xaxis_team, const nvshmem_team_config_t *yaxis_config,

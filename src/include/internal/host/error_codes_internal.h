@@ -1,7 +1,7 @@
 /****
- * Copyright (c) 2017-2019, NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2017-2025, NVIDIA CORPORATION.  All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  ****/
 
 #ifndef NVSHMEM_ERROR_CODES_INTERNAL_H_

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #ifndef NVSHMEMI_MEM_TRANSPORT_HPP
@@ -37,6 +37,13 @@ class nvshmemi_mem_p2p_transport final {
         }
     }
 
+    static void destroy_instance(void) {
+        if (p2p_objref_ != nullptr) {
+            delete p2p_objref_;
+            p2p_objref_ = nullptr;
+        }
+    }
+
     void print_mem_handle(int pe_id, int transport_idx, nvshmemi_symmetric_heap &obj);
 
     struct nvml_function_table *get_nvml_ftable(void) {
@@ -58,10 +65,14 @@ class nvshmemi_mem_p2p_transport final {
 
    private:
     explicit nvshmemi_mem_p2p_transport(int mype, int npes);
+    static void *nvml_handle_;
+    static struct nvml_function_table nvml_ftable_;
     static nvshmemi_mem_p2p_transport *p2p_objref_;  // singleton instance
     std::map<pid_t, int> proc_map_;
-    void *nvml_handle_ = nullptr;
-    struct nvml_function_table nvml_ftable_;
+
+    // Static wrapper function for atexit that matches the expected signature
+    static void nvshmemi_nvml_ftable_fini_wrapper(void);
+
     bool nvshmemi_has_mnnvl_fabric_ = false;
     std::vector<int> nvshmemi_nvl_connected_pes_;
     bool errored_on_initialization_ = true;
@@ -87,11 +98,18 @@ class nvshmemi_mem_remote_transport final {
         }
     }
 
-    int gather_mem_handles(nvshmemi_symmetric_heap &obj, uint64_t heap_offset, size_t size);
+    static void destroy_instance(void) {
+        if (remote_objref_ != nullptr) {
+            delete remote_objref_;
+            remote_objref_ = nullptr;
+        }
+    }
+
+    int gather_mem_handles(nvshmemi_symmetric_heap &obj, uint64_t heap_offset, size_t size,
+                           bool ext_allocation = false);
     /* On-demand registration and release of memory */
-    int register_mem_handle(nvshmem_mem_handle_t *local_handles, int transport_idx,
-                            nvshmem_mem_handle_t *in, void *buf, size_t size,
-                            nvshmem_transport_t current);
+    int register_mem_handle(nvshmem_mem_handle_t *local_handles, int transport_idx, void *buf,
+                            size_t size, nvshmem_transport_t current);
     int release_mem_handles(nvshmem_mem_handle_t *handles, nvshmemi_symmetric_heap &obj);
 
     int is_mem_handle_null(nvshmem_mem_handle_t *handle) {

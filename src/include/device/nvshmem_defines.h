@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #ifndef _NVSHMEM_DEFINES_H_
@@ -23,7 +23,7 @@
 #include "device/nvshmem_device_macros.h"
 #include "device_host/nvshmem_common.cuh"
 #include "non_abi/nvshmem_build_options.h"
-#ifdef NVSHMEM_ENABLE_ALL_DEVICE_INLINING
+#if defined(NVSHMEM_ENABLE_ALL_DEVICE_INLINING) || defined(__NVSHMEM_NUMBA_SUPPORT__)
 #include "non_abi/device/pt-to-pt/transfer_device.cuh"
 #else
 #include "non_abi/device/pt-to-pt/nvshmemi_transfer_api.cuh"

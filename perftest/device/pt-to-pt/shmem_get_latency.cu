@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * NVIDIA CORPORATION and its licensors retain all intellectual property
  * and proprietary rights in and to this software, related documentation
@@ -7,7 +7,7 @@
  * distribution of this software and related documentation without an express
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  *
- * See COPYRIGHT.txt for license information
+ * See License.txt for license information
  */
 
 #define CUMODULE_NAME "shmem_get_latency.cubin"
@@ -21,7 +21,7 @@
 
 #define THREADS_PER_WARP 32
 
-#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+#if defined __cplusplus || defined NVSHMEM_HOSTLIB_ONLY
 extern "C" {
 #endif
 
@@ -55,7 +55,7 @@ __global__ void latency_kern(int *data_d, int len, int pe, int iter) {
 LATENCY_THREADGROUP(warp)
 LATENCY_THREADGROUP(block)
 
-#if defined __cplusplus || defined NVSHMEM_BITCODE_APPLICATION
+#if defined __cplusplus || defined NVSHMEM_HOSTLIB_ONLY
 }
 #endif
 
@@ -115,8 +115,14 @@ int main(int argc, char *argv[]) {
         goto finalize;
     }
 
-    data_d = (int *)nvshmem_malloc(max_size);
-    CUDA_CHECK(cudaMemset(data_d, 0, max_size));
+    if (use_mmap) {
+        data_d = (int *)allocate_mmap_buffer(max_size, mem_handle_type, use_egm, true);
+        DEBUG_PRINT("Allocated mmap buffer\n");
+    } else {
+        data_d = (int *)nvshmem_malloc(max_size);
+        DEBUG_PRINT("Allocated nvshmem malloc buffer\n");
+        CUDA_CHECK(cudaMemset(data_d, 0, max_size));
+    }
 
     array_size = max_size_log;
     alloc_tables(&h_tables, 2, array_size);
@@ -216,7 +222,13 @@ int main(int argc, char *argv[]) {
 
 finalize:
 
-    if (data_d) nvshmem_free(data_d);
+    if (data_d) {
+        if (use_mmap) {
+            free_mmap_buffer(data_d);
+        } else {
+            nvshmem_free(data_d);
+        }
+    }
     free_tables(h_tables, 2);
     finalize_wrapper();
 

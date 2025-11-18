@@ -1,7 +1,7 @@
 /* -*- Mode: C; c-basic-offset:4 ; -*- */
 /*
  *  (C) 2007 by Argonne National Laboratory.
- *      See COPYRIGHT in top-level directory.
+ *      See License.txt in top-level directory.
  */
 
 #ifndef PMI2UTIL_H_INCLUDED

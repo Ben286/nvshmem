@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2016-2020, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2016-2025, NVIDIA CORPORATION. All rights reserved.
  *
- * See COPYRIGHT for license information
+ * See License.txt for license information
  */
 
 #include "ibdevx.h"
@@ -26,6 +26,7 @@
 #include "internal/host_transport/cudawrap.h"                // for CUPFN, nvshmemi_cuda_fn...
 #include "bootstrap_host_transport/env_defs_internal.h"      // for nvshmemi_options_s, nvs...
 #include "non_abi/nvshmemx_error.h"                          // for NVSHMEMX_ERROR_INTERNAL
+#include "non_abi/nvshmem_build_options.h"                   // for NVSHMEM_USE_MLX5DV
 #include "non_abi/nvshmem_version.h"
 #include "infiniband/mlx5dv.h"  // for DEVX_SET, mlx5_wqe_ctrl...
 #include "infiniband/verbs.h"   // for ibv_port_attr, ibv_ah_attr
@@ -59,7 +60,7 @@ int ibdevx_qp_depth;
 #error Unknown cache line size
 #endif
 
-#define MAX_NUM_HCAS 16
+#define MAX_NUM_HCAS 48
 #define MAX_NUM_PORTS 4
 #define MAX_NUM_PES_PER_NODE 32
 #define BAR_READ_BUFSIZE (sizeof(uint64_t))
@@ -95,6 +96,7 @@ struct ibdevx_device {
     struct ibv_cq *send_cq;
     int srqn;
     int pdn;
+    bool data_direct;
 };
 
 struct __attribute__((__packed__)) ibdevx_rw_inline_data_seg {
@@ -235,8 +237,9 @@ typedef struct {
     int *dev_ids;
     int *port_ids;
     int n_dev_ids;
-    int proxy_ep_idx;
     int ep_count;
+    int host_ep_idx;
+    int cur_ep_idx;
     int selected_dev_id;
     int log_level;
     bool dmabuf_support;
@@ -258,6 +261,11 @@ static int use_ib_native_atomics = 1;
 static struct nvshmemt_ibv_function_table ftable;
 static void *ibv_handle;
 
+#ifdef NVSHMEM_USE_MLX5DV
+static struct nvshmemt_mlx5dv_function_table mlx5dv_ftable;
+static void *mlx5dv_handle;
+#endif
+
 int check_poll_avail(struct ibdevx_ep *ep, int wait_predicate);
 int progress_send(transport_ibdevx_state_t *ibdevx_state);
 
@@ -272,10 +280,11 @@ static int get_pci_path(int dev, char **pci_path, nvshmem_transport_t t) {
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
     transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)transport->state;
     int dev_id = ibdevx_state->dev_ids[dev];
-    const char *ib_name =
-        (const char *)((struct ibdevx_device *)ibdevx_state->devices)[dev_id].dev->name;
 
-    status = nvshmemt_ib_iface_get_mlx_path(ib_name, pci_path);
+    struct ibdevx_device *device = &(((struct ibdevx_device *)ibdevx_state->devices)[dev_id]);
+    status = nvshmemt_ib_iface_get_mlx_path(device->dev, device->context, pci_path, &ftable,
+                                            &mlx5dv_ftable, &(device->data_direct),
+                                            ibdevx_state->log_level);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "nvshmemt_ib_iface_get_mlx_path failed \n");
 
@@ -823,8 +832,7 @@ out:
     return status;
 }
 
-int nvshmemt_ibdevx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
-                                   nvshmem_mem_handle_t *mem_handle_in, void *buf, size_t length,
+int nvshmemt_ibdevx_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf, size_t length,
                                    nvshmem_transport_t t, bool local_only) {
     int status = 0;
     struct nvshmem_transport *transport = (struct nvshmem_transport *)t;
@@ -832,10 +840,27 @@ int nvshmemt_ibdevx_get_mem_handle(nvshmem_mem_handle_t *mem_handle,
     struct ibdevx_device *device = ((struct ibdevx_device *)ibdevx_state->devices +
                                     ibdevx_state->dev_ids[ibdevx_state->selected_dev_id]);
 
-    status = nvshmemt_ib_common_reg_mem_handle(&ftable, device->pd, mem_handle, buf, length,
-                                               local_only, ibdevx_state->dmabuf_support,
-                                               ibdevx_state->table, ibdevx_state->log_level,
-                                               ibdevx_state->options->IB_ENABLE_RELAXED_ORDERING);
+    /*
+     * In cases where same physical memory has been mapped to multiple VAs (say VA1 and VA2)
+     * e.g., user buffers mmapped into symmetric heap. Using VA2 for buffer registration
+     * and gdrcopy.pin_buffer is unsupported in RM/nv-p2p (Ref nvbug 507809).
+     * We need to use VA1 (first mapped address mapped) as a work around.
+     * For an mmapped buffer, buf is VA2, we track the VA2->VA1 mapping during mmap call
+     * alias_va_ptr will hold the VA1 address, if applicable
+     */
+    void *alias_va_ptr = NULL;
+    if (transport->alias_va_map != NULL && transport->alias_va_map->count(buf)) {
+        INFO(ibdevx_state->log_level, "IBDEVX: alias va found for buf: %p, alias va: %p", buf,
+             transport->alias_va_map->operator[](buf));
+        alias_va_ptr = transport->alias_va_map->operator[](buf);
+    }
+
+    INFO(ibdevx_state->log_level, "[%d] IBDEVX: device used %s, data_direct support: %d",
+         transport->my_pe, device->dev->name, device->data_direct);
+    status = nvshmemt_ib_common_reg_mem_handle(
+        &ftable, &mlx5dv_ftable, device->pd, mem_handle, buf, length, local_only,
+        ibdevx_state->dmabuf_support, ibdevx_state->table, ibdevx_state->log_level,
+        ibdevx_state->options->IB_ENABLE_RELAXED_ORDERING, device->data_direct, alias_va_ptr);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                           "Unable to register memory handle.");
 
@@ -910,6 +935,11 @@ int nvshmemt_ibdevx_finalize(nvshmem_transport_t transport) {
     }
 
     nvshmemt_ibv_ftable_fini(&ibv_handle);
+#ifdef NVSHMEM_USE_MLX5DV
+    if (mlx5dv_handle) {
+        nvshmemt_mlx5dv_ftable_fini(&mlx5dv_handle);
+    }
+#endif
 
     status = pthread_mutex_destroy(&ibdevx_mutex_send_progress);
     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "pthread_mutex_destroy failed\n");
@@ -1024,6 +1054,12 @@ static inline void nvshmemt_ibdevx_post_send(struct ibdevx_ep *ep, void *bb,
     ep->head_op_id += num_wqe_cons;
 }
 
+static int get_and_inc_cur_ep_idx(transport_ibdevx_state_t *ibdevx_state) {
+    ibdevx_state->cur_ep_idx++;
+    ibdevx_state->cur_ep_idx = ibdevx_state->cur_ep_idx % (ibdevx_state->ep_count - 1);
+    return ibdevx_state->cur_ep_idx;
+}
+
 int nvshmemt_ibdevx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
                         rma_memdesc_t *remote, rma_memdesc_t *local, rma_bytesdesc_t bytesdesc,
                         int is_proxy) {
@@ -1035,12 +1071,14 @@ int nvshmemt_ibdevx_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb
     uintptr_t wqe_bb_idx_64;
     uint32_t wqe_bb_idx_32;
     size_t wqe_size;
+    int cur_ep_idx;
 
     if (is_proxy) {
-        ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe + ibdevx_state->proxy_ep_idx)];
+        cur_ep_idx = get_and_inc_cur_ep_idx(ibdevx_state);
     } else {
-        ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe)];
+        cur_ep_idx = ibdevx_state->host_ep_idx;
     }
+    ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe + cur_ep_idx)];
 
     wqe_bb_idx_64 = ep->wqe_bb_idx;
     wqe_bb_idx_32 = ep->wqe_bb_idx;
@@ -1129,11 +1167,14 @@ static inline int nvshmemt_ibdevx_amo_32(struct nvshmem_transport *tcurr, int pe
     uint32_t swap_add_value = remote->val;
     uint32_t compare = remote->cmp;
 
+    int cur_ep_idx;
+
     if (is_proxy) {
-        ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe + ibdevx_state->proxy_ep_idx)];
+        cur_ep_idx = get_and_inc_cur_ep_idx(ibdevx_state);
     } else {
-        ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe)];
+        cur_ep_idx = ibdevx_state->host_ep_idx;
     }
+    ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe + cur_ep_idx)];
 
     wqe_bb_idx_64 = ep->wqe_bb_idx;
     wqe_bb_idx_32 = ep->wqe_bb_idx;
@@ -1286,12 +1327,14 @@ static inline int nvshmemt_ibdevx_amo_64(struct nvshmem_transport *tcurr, int pe
     size_t wqe_size;
     uintptr_t wqe_bb_idx_64;
     uint32_t wqe_bb_idx_32;
+    int cur_ep_idx;
 
     if (is_proxy) {
-        ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe + ibdevx_state->proxy_ep_idx)];
+        cur_ep_idx = get_and_inc_cur_ep_idx(ibdevx_state);
     } else {
-        ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe)];
+        cur_ep_idx = ibdevx_state->host_ep_idx;
     }
+    ep = ibdevx_state->ep[(ibdevx_state->ep_count * pe + cur_ep_idx)];
 
     wqe_bb_idx_64 = ep->wqe_bb_idx;
     wqe_bb_idx_32 = ep->wqe_bb_idx;
@@ -1515,16 +1558,23 @@ out:
 int nvshmemt_ibdevx_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
     transport_ibdevx_state_t *ibdevx_state = (transport_ibdevx_state_t *)tcurr->state;
     struct ibdevx_ep *ep;
+    int ep_idx;
+    int max_ep;
     int status = 0;
 
     if (is_proxy) {
-        ep = ibdevx_state->ep[(pe * ibdevx_state->ep_count + ibdevx_state->proxy_ep_idx)];
+        max_ep = pe * ibdevx_state->ep_count + ibdevx_state->host_ep_idx;
+        ep_idx = pe * ibdevx_state->ep_count;
     } else {
-        ep = ibdevx_state->ep[(pe * ibdevx_state->ep_count)];
+        max_ep = pe * ibdevx_state->ep_count + ibdevx_state->ep_count;
+        ep_idx = pe * ibdevx_state->ep_count + ibdevx_state->host_ep_idx;
     }
 
-    status = check_poll_avail(ep, WAIT_ALL /*1*/);
-    NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    for (; ep_idx < max_ep; ep_idx++) {
+        ep = ibdevx_state->ep[ep_idx];
+        status = check_poll_avail(ep, WAIT_ALL /*1*/);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out, "check_poll failed \n");
+    }
 
 out:
     return status;
@@ -1588,7 +1638,9 @@ int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t, int *selected_dev_i
 
     int n_pes = t->n_pes;
 
-    int ep_count = ibdevx_state->ep_count = MAX_TRANSPORT_EP_COUNT + 1;
+    int ep_count = ibdevx_state->ep_count = ibdevx_state->options->IB_NUM_RC_PER_DEVICE + 1;
+    ibdevx_state->host_ep_idx = ibdevx_state->options->IB_NUM_RC_PER_DEVICE;
+    ibdevx_state->cur_ep_idx = 0;
 
     if (ibdevx_state->selected_dev_id >= 0) {
         NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INVALID_VALUE, out_already_connected,
@@ -1602,7 +1654,7 @@ int nvshmemt_ibdevx_connect_endpoints(nvshmem_transport_t t, int *selected_dev_i
     }
 
     /* allocate all EPs for transport, plus 1 for the proxy thread. */
-    ibdevx_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
+    ibdevx_state->host_ep_idx = MAX_TRANSPORT_EP_COUNT;
     ibdevx_state->selected_dev_id = selected_dev_ids[0];
 
     ibdevx_state->ep = (struct ibdevx_ep **)calloc(n_pes * ep_count, sizeof(struct ibdevx_ep *));
@@ -1714,6 +1766,26 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
                            "Unable to dlopen libibverbs. Skipping devx transport.");
     }
 
+#ifdef NVSHMEM_USE_MLX5DV
+    if (!ibdevx_state->options->DISABLE_DATA_DIRECT) {
+        if (nvshmemt_mlx5dv_ftable_init(&mlx5dv_handle, &mlx5dv_ftable, ibdevx_state->log_level)) {
+            NVSHMEMI_WARN_PRINT("Unable to dlopen libmlx5dv. Disabling directNIC features.");
+            // mlx5dv_handle will be NULL on failure
+            mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+            mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+            mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        }
+    } else {
+        mlx5dv_ftable.mlx5dv_internal_is_supported = NULL;
+        mlx5dv_ftable.mlx5dv_internal_get_data_direct_sysfs_path = NULL;
+        mlx5dv_ftable.mlx5dv_internal_reg_dmabuf_mr = NULL;
+        INFO(ibdevx_state->log_level,
+             "directNIC features are disabled by NVSHMEM_DISABLE_DATA_DIRECT=1");
+    }
+#else
+    INFO(ibdevx_state->log_level, "directNIC features are disabled");
+#endif
+
     if (ibdevx_state->options->DISABLE_IB_NATIVE_ATOMICS) {
         use_ib_native_atomics = 0;
     }
@@ -1790,10 +1862,22 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         const char *name = ftable.get_device_name(device->dev);
         NVSHMEMI_NULL_ERROR_JMP(name, status, NVSHMEMX_ERROR_INTERNAL, out,
                                 "ibv_get_device_name failed \n");
-        if (!strstr(name, "mlx5")) {
+
+        const char *hca_prefix = ibdevx_state->options->HCA_PREFIX;
+        bool device_supported = false;
+
+        if (hca_prefix) {
+            device_supported = strstr(name, hca_prefix) != NULL;
+        } else {
+            device_supported = strstr(name, "mlx5") != NULL || strstr(name, "ibp") != NULL;
+        }
+
+        if (!device_supported) {
             ftable.close_device(device->context);
             device->context = NULL;
-            NVSHMEMI_WARN_PRINT("device %s is not enumerated as an mlx5 device. Skipping...", name);
+            NVSHMEMI_WARN_PRINT(
+                "device %s is not supported (expected HCA interface: %s). Skipping...\n", name,
+                hca_prefix ? hca_prefix : "mlx5 or ibp");
             continue;
         }
 
@@ -1945,6 +2029,13 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
         status = get_pci_path(i, &transport->device_pci_paths[i], transport);
         NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out,
                               "Failed to get paths for PCI devices.");
+        if (((struct ibdevx_device *)ibdevx_state->devices)[ibdevx_state->dev_ids[i]].data_direct &&
+            ibdevx_state->options->IB_NUM_RC_PER_DEVICE < 4) {
+            // Need 4 QPs for achieving bandwidth in data direct device
+            ibdevx_state->options->IB_NUM_RC_PER_DEVICE = 4;
+            INFO(ibdevx_state->log_level,
+                 "Setting IB_NUM_RC_PER_DEVICE = 4 as data direct device is detected");
+        }
     }
 
     // print devices that were not found
@@ -1975,7 +2066,11 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     transport->host_ops.release_mem_handle = nvshmemt_ibdevx_release_mem_handle;
     transport->host_ops.rma = nvshmemt_ibdevx_rma;
     transport->host_ops.amo = nvshmemt_ibdevx_amo;
-    transport->host_ops.fence = NULL;
+    if (ibdevx_state->options->IB_NUM_RC_PER_DEVICE > 1) {
+        transport->host_ops.fence = nvshmemt_ibdevx_quiet;
+    } else {
+        transport->host_ops.fence = NULL;
+    }
     transport->host_ops.quiet = nvshmemt_ibdevx_quiet;
     transport->host_ops.finalize = nvshmemt_ibdevx_finalize;
     transport->host_ops.show_info = nvshmemt_ibdevx_show_info;
