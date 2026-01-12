@@ -17,6 +17,9 @@ set_property(DIRECTORY PROPERTY ADDITIONAL_MAKE_CLEAN_FILES
     ${CMAKE_BINARY_DIR}/cmake_install.cmake
 )
 
+# addCybind target is only executed in build_source_pkg instance. In subsequent
+# steps, we exclude addCybind from source file. The following step skips
+# addCybind target for all subsequent steps.
 if(EXISTS "${CMAKE_SOURCE_DIR}/nvshmem4py/cmake/addCybind.cmake")
     include(cmake/addCybind.cmake)
     # This finds Cybind, clones it, and generates the 1:1 bindings for NVSHMEM
@@ -25,6 +28,18 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/nvshmem4py/cmake/addCybind.cmake")
         KNOWN_DEST "${CMAKE_SOURCE_DIR}/src/nvshmem4py/bindings/"
     )
 endif()
+
+# addNumbast target is only executed in build_source_pkg instance. In subsequent
+# steps, we exclude addNumbast from source file. The following step skips
+# addNumbast target for all subsequent steps.
+# Skip bindings if they are already generated
+if(EXISTS "${CMAKE_SOURCE_DIR}/nvshmem4py/cmake/addNumbast.cmake" AND NVSHMEM_BUILD_PYTHON_DEVICE_LIB AND NOT EXISTS "${CMAKE_SOURCE_DIR}/nvshmem4py/nvshmem/bindings/device/numba/_numbast.py")
+    include(cmake/addNumbast.cmake)
+    AddNumbast(
+        GIT_TAG "v0.5.4"
+    )
+endif()
+
 
 # Find all the Python versions
 # Use bash to find all Python versions >= 3.9
@@ -47,7 +62,7 @@ foreach(LINE IN LISTS PYTHON_LINE_LIST)
     list(GET PYTHON_PAIR 0 PY_VER)
     list(GET PYTHON_PAIR 1 PY_EXEC)
     message(STATUS "Found Python3 ${PY_EXEC}")
-    set(CUDA_VERSIONS "11" "12" "13")
+    set(CUDA_VERSIONS "12" "13")
 
     foreach(CUDA_VER IN LISTS CUDA_VERSIONS)
         set(WHEEL_TARGET build_nvshmem4py_wheel_cu${CUDA_VER}_${PY_VER})
@@ -61,6 +76,10 @@ foreach(LINE IN LISTS PYTHON_LINE_LIST)
         # All wheels depend on bindings
         if(TARGET build_bindings_cybind)
             add_dependencies(${WHEEL_TARGET} build_bindings_cybind)
+        endif()
+
+        if(TARGET build_bindings_numbast AND NVSHMEM_BUILD_PYTHON_DEVICE_LIB)
+            add_dependencies(${WHEEL_TARGET} build_bindings_numbast)
         endif()
 
         set(PREV_WHEEL_TARGET ${WHEEL_TARGET})

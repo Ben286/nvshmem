@@ -41,33 +41,7 @@ typedef enum { LL8 = 0, LL128 } ll_version_t;
 template <typename T, threadgroup_t SCOPE>
 __device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_fcollect_nvls_ll_threadgroup(
     nvshmem_team_t team, T *dest, const T *source, size_t nelems) {
-#if defined __clang_llvm_bitcode_lib__
-    if (__nvvm_reflect("__CUDA_ARCH") >= 900) {
-        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
-        const size_t fcollect_ll_threshold =
-            nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll_threshold;
-        const size_t fcollect_count = teami->fcollect_count;
-        const uint32_t ll_flag = teami->fcollect_count;
-        char *pWrk = (char *)nvshmemi_team_get_psync(teami, FCOLLECT) +
-                     (2 * teami->size * fcollect_ll_threshold *
-                      (fcollect_count % 2)); /* same for NVLS in terms of size */
-        const size_t pack_offset = (nvshmemi_team_my_pe(team) * nelems * sizeof(T)) /
-                                   sizeof(uint32_t); /* offset in pSync space */
-        /* Find the multicast ptr for pWrk + pack_offset and do a store to remote pSync */
-        void *mcast_pWrk = nvshmemi_mc_ptr(teami, (void *)((uint64_t *)pWrk + pack_offset));
-        nvshmemi_mcast_packLL<T, SCOPE>((uint64_t *)mcast_pWrk, source, nelems, ll_flag);
-        for (int ii = 0; ii < teami->size; ii += 1) {
-            size_t prev_offset = (nelems * ii * sizeof(T)) / sizeof(uint32_t);
-            nvshmemi_mcast_recvLL<T, SCOPE>(dest + (ii * nelems), (uint64_t *)pWrk + prev_offset,
-                                            nelems, ll_flag);
-        }
-
-        nvshmemi_threadgroup_sync<SCOPE>();
-    } else {
-        assert(0 && "NVLink SHARP is not supported on this platform");
-    }
-#else
-#if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
+#if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010 || defined(__clang_llvm_bitcode_lib__)
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     const size_t fcollect_ll_threshold =
         nvshmemi_device_state_d.gpu_coll_env_params_var.fcollect_ll_threshold;
@@ -90,7 +64,6 @@ __device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_fcollect_nvls_ll_th
     nvshmemi_threadgroup_sync<SCOPE>();
 #else
     assert(0 && "NVLink SHARP is not supported on this platform");
-#endif
 #endif
 }
 
@@ -173,12 +146,12 @@ __device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_fcollect_allpush_ll
             next_pe = nvshmemi_team_translate_pe_to_team_world_wrap(teami, ii);
             if (NODE_SAFE) {
                 if (nvshmemi_ptr(pWrk, next_pe) == NULL) {
-                    nvshmemi_put_nbi_threadgroup<T, NVSHMEMI_THREADGROUP_THREAD>(
+                    nvshmemi_put_nbi<T, NVSHMEMI_THREADGROUP_THREAD>(
                         pWrk + pack_offset, pWrk + pack_offset, psync_remote_write_elements,
                         next_pe);
                 }
             } else {
-                nvshmemi_put_nbi_threadgroup<T, NVSHMEMI_THREADGROUP_THREAD>(
+                nvshmemi_put_nbi<T, NVSHMEMI_THREADGROUP_THREAD>(
                     pWrk + pack_offset, pWrk + pack_offset, psync_remote_write_elements, next_pe);
             }
         }
@@ -323,7 +296,7 @@ __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fcollect_allpush_threadgr
     // nvshmemi_threadgroup_sync<SCOPE>();
     for (int ii = teami->my_pe; ii < teami->size + teami->my_pe; ii++) {
         next_rank = nvshmemi_team_translate_pe_to_team_world_wrap(teami, ii);
-        nvshmemi_put_nbi_threadgroup<T, SCOPE>(dest + dest_offset, source, nelems, next_rank);
+        nvshmemi_put_nbi<T, SCOPE>(dest + dest_offset, source, nelems, next_rank);
     }
     nvshmemi_barrier_threadgroup<SCOPE>(team);
 }
@@ -346,18 +319,7 @@ __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fcollect_p2p_allpush_thre
 template <typename T, threadgroup_t SCOPE>
 __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fcollect_nvls_allpush_threadgroup(
     nvshmem_team_t team, T *dest, const T *source, int dest_offset, size_t nelems) {
-#if defined __clang_llvm_bitcode_lib__
-    if (__nvvm_reflect("__CUDA_ARCH") >= 900) {
-        nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
-        nvshmemi_threadgroup_sync<SCOPE>();
-        T *dst_ptr = (T *)nvshmemi_mc_ptr(teami, (void *)(dest + dest_offset));
-        nvshmemi_mcast_memcpy_threadgroup<T, SCOPE>(dst_ptr, source, nelems * sizeof(T));
-        nvshmemi_barrier_threadgroup<SCOPE>(team);
-    } else {
-        assert(0 && "NVLS is not supported on this platform");
-    }
-#else
-#if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
+#if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010 || defined(__clang_llvm_bitcode_lib__)
     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
     nvshmemi_threadgroup_sync<SCOPE>();
     T *dst_ptr = (T *)nvshmemi_mc_ptr(teami, (void *)(dest + dest_offset));
@@ -365,7 +327,6 @@ __device__ NVSHMEMI_DEVICE_ALWAYS_INLINE void nvshmemi_fcollect_nvls_allpush_thr
     nvshmemi_barrier_threadgroup<SCOPE>(team);
 #else
     assert(0 && "NVLS is not supported on this platform");
-#endif
 #endif
 }
 
@@ -506,6 +467,7 @@ __device__ NVSHMEMI_DEVICE_ALWAYS_FORCE_INLINE void nvshmemi_fcollect_threadgrou
     }
 }
 
+#if defined(__cplusplus) && __cplusplus >= 201703L
 // ************** Tile allgather **************/
 
 template <typename elemType, threadgroup_t SCOPE, typename tuple_t, int major_dim, int minor_dim>
@@ -1008,6 +970,7 @@ __device__ inline void nvshmemi_tile_allgather_nvls_threadgroup(nvshmem_team_t t
         }
     }
 }
+#endif  //__cplusplus >= 201703L
 
 // Tile allgather entrypoint
 // Call underlying function based on scope and algo
@@ -1018,7 +981,7 @@ __device__ inline int nvshmemi_tile_allgather(nvshmem_team_t team, src_tensor_t 
                                               tuple_t boundary, uint64_t flag) {
 #if defined(__cplusplus) && __cplusplus < 201703L
     assert(0 && "Tile-granular APIs need C++ 17");
-#endif
+#else
     using T = typename src_tensor_t::value_type;
 
     static_assert(
@@ -1042,8 +1005,8 @@ __device__ inline int nvshmemi_tile_allgather(nvshmem_team_t team, src_tensor_t 
             nvshmem_team_n_pes(team)) &&
            (get_shape_element<0>(dst_tensor) * get_shape_element<1>(dst_tensor)));
 
-    // TODO add other data types
-    static_assert(((is_half<T>::value) || (is_bfloat<T>::value) || (is_float<T>::value)),
+    static_assert(((is_half<T>::value) || (is_bfloat<T>::value) || (is_float<T>::value) ||
+                   (is_cutlass_half<T>()) || (is_cutlass_bfloat<T>)),
                   "Unsupported datatype");
 
     // check if both src and dst have same continuous dimension
@@ -1075,6 +1038,7 @@ __device__ inline int nvshmemi_tile_allgather(nvshmem_team_t team, src_tensor_t 
         // Extend as other algorithms are added
         return 0;
     }
+#endif  //__cplusplus >= 201703L
 }
 #endif /* __CUDA_ARCH__ */
 #endif /* FCOLLECT_DEVICE_CUH */

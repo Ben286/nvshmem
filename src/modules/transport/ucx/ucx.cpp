@@ -16,6 +16,7 @@
 #include <deque>                     // for deque
 #include <unordered_map>
 #include "bootstrap_host_transport/env_defs_internal.h"  // for nvsh...
+#include "device_host_transport/nvshmem_constants.h"
 #include "non_abi/nvshmem_version.h"
 #include "non_abi/nvshmemx_error.h"                                        // for NVSH...
 #include "non_abi/nvshmem_build_options.h"                                 // IWYU pragma: keep
@@ -421,7 +422,7 @@ error:
 }
 
 int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t, int *selected_dev_ids,
-                                   int num_selected_devs) {
+                                   int num_selected_devs, int *out_qp_indices, int num_qps) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)t->state;
     ucx_ep_handle_t local_ep_handle, *ep_handles = NULL;
     ucs_status_t ucs_rc;
@@ -437,9 +438,10 @@ int nvshmemt_ucx_connect_endpoints(nvshmem_transport_t t, int *selected_dev_ids,
     ucx_state->proxy_ep_idx = MAX_TRANSPORT_EP_COUNT;
 
     if (ucx_state->endpoints != NULL) {
-        NVSHMEMI_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, out_already_connected,
-                           "Device already selected. ucx only supports"
-                           " one NIC per PE.\n");
+        NVSHMEMI_WARN_PRINT(
+            "Device already selected. ucx only supports one NIC per PE and doesn't support "
+            "additional QPs.\n");
+        goto out_already_connected;
     }
 
     ucx_state->endpoints = (ucp_ep_h *)calloc(n_pes * ep_count, sizeof(ucp_ep_h));
@@ -1007,7 +1009,7 @@ fetch_atomic:
     return NVSHMEMX_ERROR_INTERNAL;
 }
 
-int nvshmemt_ucx_fence(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
+int nvshmemt_ucx_fence(struct nvshmem_transport *tcurr, int pe, int qp_index, int is_multi) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)tcurr->state;
     ucs_status_t ucs_rc;
 
@@ -1019,7 +1021,7 @@ int nvshmemt_ucx_fence(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
     return 0;
 }
 
-int nvshmemt_ucx_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
+int nvshmemt_ucx_quiet(struct nvshmem_transport *tcurr, int pe, int qp_index) {
     transport_ucx_state_t *ucx_state = (transport_ucx_state_t *)tcurr->state;
     ucp_request_param_t param;
     void *ucs_status;
@@ -1030,7 +1032,7 @@ int nvshmemt_ucx_quiet(struct nvshmem_transport *tcurr, int pe, int is_proxy) {
     /* Since atomics are managed by a two-part request, we need to track them seperately. */
 #ifdef NVSHMEM_USE_GDRCOPY
     if (use_gdrcopy) {
-        if (is_proxy) {
+        if (qp_index != NVSHMEMX_QP_HOST) {
             while (nvshmemt_ucx_submitted_proxy_atomics > nvshmemt_ucx_completed_proxy_atomics) {
                 nvshmemt_ucx_progress(tcurr);
             }
@@ -1446,6 +1448,7 @@ int nvshmemt_init(nvshmem_transport_t *t, struct nvshmemi_cuda_fn_table *table, 
     transport->host_ops.progress = nvshmemt_ucx_progress;
     transport->host_ops.enforce_cst = nvshmemt_ucx_enforce_cst_at_target;
     transport->host_ops.enforce_cst_at_target = NULL;
+    transport->host_ops.put_signal = nvshmemt_put_signal;
     transport->attr = NVSHMEM_TRANSPORT_ATTR_CONNECTED;
     transport->state = (void *)ucx_state;
     transport->is_successfully_initialized = true;

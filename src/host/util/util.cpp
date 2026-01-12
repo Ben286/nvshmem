@@ -18,7 +18,7 @@
 #include <string>                                // for string, basic...
 #include "non_abi/nvshmemx_error.h"              // for NVSHMEMI_ERRO...
 #include "internal/host/debug.h"                 // for INFO, NVSHMEM...
-#include "internal/host/error_codes_internal.h"  // for NVSHMEMI_SUCCESS
+#include "internal/common/error_codes_internal.h"// for NVSHMEMI_SUCCESS
 #include "internal/host/util.h"                  // for nvshmemu_getHostHash
 #include "internal/bootstrap_host_transport/nvshmemi_bootstrap_defines.h"  // for bootstrap_han...
 
@@ -158,6 +158,7 @@ char *nvshmemu_wrap(const char *str, const size_t wraplen, const char *indent,
     return out;
 }
 
+#ifndef NVSHMEM_INFO_ONLY
 /* Output the CPU affinity of the calling thread to the debug log with the
  * provided 'category'.  The 'thread_name' is printed to identify the calling
  * thread.
@@ -193,6 +194,7 @@ void nvshmemu_debug_log_cpuset(int category, const char *thread_name) {
         free(cores_str_wrap);
     }
 }
+#endif
 
 nvshmemResult_t nvshmemu_gethostname(char *hostname, int maxlen) {
     if (gethostname(hostname, maxlen) != 0) {
